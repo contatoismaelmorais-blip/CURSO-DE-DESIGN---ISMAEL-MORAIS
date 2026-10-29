@@ -4,6 +4,11 @@ const STORE = 'arquivos';
 const FALLBACK_KEY = 'curso:arquivos:fallback:v1';
 let dbPromise = null;
 
+function emit(name, detail) {
+  if (typeof window === 'undefined' || typeof CustomEvent === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(name, detail ? { detail } : undefined));
+}
+
 function openDB() {
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve, reject) => {
@@ -85,9 +90,13 @@ export async function saveFile(aulaId, file) {
     const dataUrl = await blobToDataUrl(file);
     const list = readFallback();
     list.push({ ...registro, dataUrl });
-    writeFallback(list);
+    try {
+      writeFallback(list);
+    } catch {
+      throw new Error('Armazenamento local cheio: remova arquivos antigos ou use um navegador com mais espaço.');
+    }
   }
-  window.dispatchEvent(new CustomEvent('arquivos:changed', { detail: { aulaId } }));
+  emit('arquivos:changed', { aulaId });
   return registro;
 }
 
@@ -141,7 +150,7 @@ export async function deleteFile(id) {
   } catch {
     writeFallback(readFallback().filter((f) => f.id !== id));
   }
-  window.dispatchEvent(new CustomEvent('arquivos:changed'));
+  emit('arquivos:changed');
 }
 
 /** Baixa/abre o arquivo salvo. */
@@ -159,13 +168,4 @@ export async function downloadFile(id, nome) {
   return true;
 }
 
-export function formatSize(bytes) {
-  if (!bytes && bytes !== 0) return '';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-export function formatDate(ts) {
-  return new Date(ts).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' });
-}
+export { formatSize, formatDate } from './util.js';

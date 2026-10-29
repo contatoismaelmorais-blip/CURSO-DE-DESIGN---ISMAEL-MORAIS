@@ -20,6 +20,11 @@ function writeJSON(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
+function emit(name, detail) {
+  if (typeof window === 'undefined' || typeof CustomEvent === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(name, detail ? { detail } : undefined));
+}
+
 export function getAulas() {
   const list = readJSON(AULAS_KEY, null);
   if (!Array.isArray(list)) {
@@ -32,7 +37,7 @@ export function getAulas() {
 
 export function saveAulas(list) {
   writeJSON(AULAS_KEY, list);
-  window.dispatchEvent(new CustomEvent('aulas:changed'));
+  emit('aulas:changed');
 }
 
 export function getModulos() {
@@ -47,7 +52,7 @@ export function getModulos() {
 
 export function saveModulos(list) {
   writeJSON(MODULOS_KEY, list);
-  window.dispatchEvent(new CustomEvent('aulas:changed'));
+  emit('aulas:changed');
 }
 
 export function getAula(id) {
@@ -106,8 +111,8 @@ export function youtubeEmbed(id) {
 
 function seedModulos() {
   return [
-    { id: 'mod_1', nome: 'Módulo 1 — Fundamentos', ordem: 1 },
-    { id: 'mod_2', nome: 'Módulo 2 — Prática', ordem: 2 },
+    { id: 'mod_1', nome: 'Módulo 1: Fundamentos', ordem: 1 },
+    { id: 'mod_2', nome: 'Módulo 2: Prática', ordem: 2 },
   ];
 }
 

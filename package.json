@@ -5,7 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build"
+    "build": "vite build",
+    "test": "node test/parse.test.mjs && node test/db.test.mjs && node test/estatico.test.mjs",
+    "check": "node test/parse.test.mjs && node test/db.test.mjs && node test/estatico.test.mjs",
+    "browser-check": "vite build && node tools/browser-check.mjs",
+    "lint": "node taste-skill-main/skills/taste-skill/scripts/lint.mjs index.html styles.css app.js admin.js store.js db.js util.js --app"
   },
   "devDependencies": {
     "vite": "8.3.2"

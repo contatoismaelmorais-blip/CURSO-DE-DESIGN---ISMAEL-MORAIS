@@ -6,20 +6,15 @@ import {
   youtubeEmbed,
   isAdmin,
 } from './store.js';
-import { listFiles, saveFile, downloadFile, deleteFile, formatSize, formatDate } from './db.js';
+import { listFiles, saveFile, downloadFile, deleteFile } from './db.js';
 import { renderAdminPage } from './admin.js';
+import { esc, formatSize, formatDate, extIcon } from './util.js';
 import content from './content.json';
 
-const app = document.getElementById('app');
+const app = document.getElementById('conteudo');
 const toastEl = document.getElementById('toast');
 
 /* ---------------------------------------------------------------- helpers */
-export function esc(str = '') {
-  return String(str).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-}
-
 export function toast(msg, kind = 'ok') {
   toastEl.textContent = msg;
   toastEl.className = `toast toast--${kind} is-visible`;
@@ -72,14 +67,15 @@ function renderHome() {
         .map((a) => {
           const thumb = youtubeThumb(a.youtubeId);
           return `
-          <article class="card" data-aula="${esc(a.id)}" tabindex="0" role="link" aria-label="${esc(a.titulo)}">
-            <a class="card-thumb" href="#/aula/${esc(a.id)}">
+          <article class="card">
+            <a class="card-thumb" href="#/aula/${esc(a.id)}" tabindex="-1" aria-hidden="true">
               ${thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy">` : '<span class="card-thumb-empty"></span>'}
               <span class="card-play" aria-hidden="true">▶</span>
             </a>
             <div class="card-body">
-              <h3>${esc(a.titulo)}</h3>
+              <h3><a href="#/aula/${esc(a.id)}">${esc(a.titulo)}</a></h3>
               <p>${esc(a.descricao || 'Sem descrição')}</p>
+              <span class="card-meta" data-files-for="${esc(a.id)}"></span>
             </div>
           </article>`;
         })
@@ -97,7 +93,6 @@ function renderHome() {
 
   app.innerHTML = `
     <section class="hero">
-      <span class="eyebrow">${esc(content.tagline)}</span>
       <h1>${esc(content.heroTitle)}</h1>
       <p>${esc(content.heroText)}</p>
       <div class="hero-actions">
@@ -112,6 +107,14 @@ function renderHome() {
     </section>
     ${modulosHtml || '<p class="empty">Nenhuma aula publicada ainda. Acesse o painel do admin para cadastrar.</p>'}
   `;
+
+  // Contagem de arquivos por aula nos cards
+  app.querySelectorAll('[data-files-for]').forEach(async (el) => {
+    el.classList.add('is-loading');
+    const n = (await listFiles(el.dataset.filesFor)).length;
+    el.classList.remove('is-loading');
+    el.textContent = n ? `${n} material${n > 1 ? 'is' : ''} para download` : 'Sem materiais anexados';
+  });
 }
 
 /* ------------------------------------------------------------- página aula */
@@ -122,6 +125,10 @@ async function renderAula(id) {
     return;
   }
   const mod = getModulos().find((m) => m.id === aula.moduloId);
+  const irmas = aulaOrdenadas();
+  const idx = irmas.findIndex((a) => a.id === aula.id);
+  const anterior = idx > 0 ? irmas[idx - 1] : null;
+  const proxima = idx >= 0 && idx < irmas.length - 1 ? irmas[idx + 1] : null;
   const embed = aula.youtubeId
     ? `<iframe src="${esc(youtubeEmbed(aula.youtubeId))}" title="${esc(aula.titulo)}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>`
     : '<div class="player-empty">Sem vídeo definido para esta aula.</div>';
@@ -137,11 +144,11 @@ async function renderAula(id) {
         ${mod ? `<span class="chip">${esc(mod.nome)}</span>` : ''}
         <p class="lesson-desc">${esc(aula.descricao || '')}</p>
       </header>
-      <div class="tabs" role="tablist">
-        <button class="tab is-active" role="tab" data-tab="arquivos" aria-selected="true">Arquivos</button>
-        <button class="tab" role="tab" data-tab="sobre" aria-selected="false">Sobre a aula</button>
+      <div class="tabs" role="tablist" aria-label="Conteúdo da aula">
+        <button class="tab is-active" role="tab" id="tab-arquivos" aria-controls="panel-arquivos" data-tab="arquivos" aria-selected="true">Arquivos</button>
+        <button class="tab" role="tab" id="tab-sobre" aria-controls="panel-sobre" data-tab="sobre" aria-selected="false" tabindex="-1">Sobre a aula</button>
       </div>
-      <div class="tab-panel" data-panel="arquivos" role="tabpanel">
+      <div class="tab-panel" id="panel-arquivos" data-panel="arquivos" role="tabpanel" aria-labelledby="tab-arquivos" tabindex="0">
         <div class="files" id="files-list"><p class="muted">Carregando arquivos…</p></div>
         <form class="upload" id="upload-form">
           <label class="dropzone" for="file-input">
@@ -152,23 +159,46 @@ async function renderAula(id) {
           <button class="btn btn--primary" type="submit">Enviar arquivos</button>
         </form>
       </div>
-      <div class="tab-panel is-hidden" data-panel="sobre" role="tabpanel">
+      <div class="tab-panel is-hidden" id="panel-sobre" data-panel="sobre" role="tabpanel" aria-labelledby="tab-sobre" tabindex="0">
         <p class="lesson-desc">${esc(aula.descricao || 'Sem descrição cadastrada para esta aula.')}</p>
       </div>
     </div>
+    <nav class="lesson-nav">
+      ${anterior ? `<a class="btn btn--ghost" href="#/aula/${esc(anterior.id)}">← ${esc(anterior.titulo)}</a>` : '<span></span>'}
+      ${proxima ? `<a class="btn btn--primary" href="#/aula/${esc(proxima.id)}">${esc(proxima.titulo)} →</a>` : ''}
+    </nav>
   `;
 
-  const tabs = app.querySelectorAll('.tab');
-  tabs.forEach((tab) => {
-    tab.addEventListener('click', () => {
-      tabs.forEach((t) => {
-        const on = t === tab;
-        t.classList.toggle('is-active', on);
-        t.setAttribute('aria-selected', String(on));
-      });
-      app.querySelectorAll('.tab-panel').forEach((p) => {
-        p.classList.toggle('is-hidden', p.dataset.panel !== tab.dataset.tab);
-      });
+  const tabs = [...app.querySelectorAll('.tab')];
+  function selectTab(tab) {
+    tabs.forEach((t) => {
+      const on = t === tab;
+      t.classList.toggle('is-active', on);
+      t.setAttribute('aria-selected', String(on));
+      t.tabIndex = on ? 0 : -1;
+    });
+    app.querySelectorAll('.tab-panel').forEach((p) => {
+      p.classList.toggle('is-hidden', p.dataset.panel !== tab.dataset.tab);
+    });
+  }
+  tabs.forEach((tab, i) => {
+    tab.addEventListener('click', () => selectTab(tab));
+    tab.addEventListener('keydown', (e) => {
+      const teclas = { ArrowRight: 1, ArrowLeft: -1 };
+      if (e.key in teclas) {
+        e.preventDefault();
+        const alvo = tabs[(i + teclas[e.key] + tabs.length) % tabs.length];
+        selectTab(alvo);
+        alvo.focus();
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        selectTab(tabs[0]);
+        tabs[0].focus();
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        selectTab(tabs[tabs.length - 1]);
+        tabs[tabs.length - 1].focus();
+      }
     });
   });
 
@@ -236,17 +266,6 @@ async function refreshFiles(aulaId) {
       refreshFiles(aulaId);
     });
   });
-}
-
-function extIcon(nome = '') {
-  const ext = nome.split('.').pop().toLowerCase();
-  if (['pdf'].includes(ext)) return 'PDF';
-  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) return 'IMG';
-  if (['doc', 'docx', 'txt', 'rtf', 'odt'].includes(ext)) return 'DOC';
-  if (['xls', 'xlsx', 'csv', 'ods'].includes(ext)) return 'XLS';
-  if (['zip', 'rar', '7z'].includes(ext)) return 'ZIP';
-  if (['fig', 'sketch', 'psd', 'ai'].includes(ext)) return ext.toUpperCase();
-  return 'ARQ';
 }
 
 /* ------------------------------------------------------------------ admin */

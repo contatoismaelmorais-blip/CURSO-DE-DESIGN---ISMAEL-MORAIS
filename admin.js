@@ -12,14 +12,9 @@ import {
   setAdmin,
   uid,
 } from './store.js';
-import { listFiles, saveFile, deleteFile, downloadFile, formatSize, formatDate } from './db.js';
+import { listFiles, saveFile, deleteFile, downloadFile } from './db.js';
+import { esc, formatSize, formatDate } from './util.js';
 import content from './content.json';
-
-function esc(str = '') {
-  return String(str ?? '').replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-}
 
 function toast(msg, kind = 'ok') {
   const el = document.getElementById('toast');
@@ -41,7 +36,7 @@ function renderLogin(root) {
           <input type="password" id="pin" inputmode="numeric" autocomplete="off" required>
         </label>
         <button class="btn btn--primary" type="submit">Entrar</button>
-        <p class="muted small">PIN inicial: ${esc(content.adminPin)} — altere em Configurações após o primeiro acesso.</p>
+        <p class="muted small">PIN inicial: ${esc(content.adminPin)}. Altere em Configurações após o primeiro acesso.</p>
       </form>
     </section>`;
   root.querySelector('#login-form').addEventListener('submit', (e) => {
@@ -65,13 +60,14 @@ export function renderAdminPage(root) {
   root.innerHTML = `
     <section class="admin-head">
       <div>
-        <span class="eyebrow">Administração</span>
         <h1>Painel do curso</h1>
         <p class="muted">Cadastre aulas, defina os links do YouTube, títulos, ordem e os arquivos de cada aula.</p>
       </div>
       <div class="admin-actions">
         <button class="btn btn--primary" id="nova-aula">+ Nova aula</button>
         <button class="btn btn--ghost" id="novo-modulo">+ Novo módulo</button>
+        <button class="btn btn--ghost" id="exportar">Exportar dados</button>
+        <button class="btn btn--ghost" id="importar">Importar dados</button>
         <button class="btn btn--ghost" id="abrir-painel">Ver como aluno</button>
         <button class="btn btn--danger" id="sair">Sair</button>
       </div>
@@ -132,11 +128,13 @@ function adminRow(a, modulos) {
         <strong>${esc(a.titulo)}</strong>
         <div class="muted small">ordem ${esc(a.ordem ?? 0)}</div>
       </td>
-      <td>${esc(mod ? mod.nome : '—')}</td>
+      <td>${esc(mod ? mod.nome : 'sem módulo')}</td>
       <td>${id ? `<code>${id}</code>` : '<span class="muted">sem link</span>'}</td>
       <td class="files-count" data-count-for="${esc(a.id)}">…</td>
       <td>${a.publicado === false ? '<span class="badge badge--off">Rascunho</span>' : '<span class="badge">Publicado</span>'}</td>
       <td class="row-actions">
+        <button class="btn btn--small" data-up="${esc(a.id)}" title="Subir">↑</button>
+        <button class="btn btn--small" data-down="${esc(a.id)}" title="Descer">↓</button>
         <button class="btn btn--small" data-edit="${esc(a.id)}">Editar</button>
         <button class="btn btn--small" data-arquivos="${esc(a.id)}">Arquivos</button>
         <button class="btn btn--small btn--danger" data-del="${esc(a.id)}">Excluir</button>
@@ -148,6 +146,37 @@ function bindAdmin(root) {
   root.querySelector('#nova-aula').addEventListener('click', () => openAulaModal(root, null));
   root.querySelector('#novo-modulo').addEventListener('click', () => openModuloModal(root, null));
   root.querySelector('#abrir-painel').addEventListener('click', () => { location.hash = '#/'; });
+  root.querySelector('#exportar').addEventListener('click', () => {
+    const payload = JSON.stringify({ aulas: getAulas(), modulos: getModulos() }, null, 2);
+    const blob = new Blob([payload], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'curso-aulas-backup.json';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+    toast('Backup exportado.');
+  });
+  root.querySelector('#importar').addEventListener('click', () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json,.json';
+    input.addEventListener('change', async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        const data = JSON.parse(await file.text());
+        if (!Array.isArray(data.aulas) || !Array.isArray(data.modulos)) throw new Error('Arquivo inválido');
+        saveAulas(data.aulas);
+        saveModulos(data.modulos);
+        toast('Dados importados.');
+        renderAdminPage(root);
+      } catch (err) {
+        toast(err.message || 'Falha ao importar o backup.', 'error');
+      }
+    });
+    input.click();
+  });
   root.querySelector('#sair').addEventListener('click', () => { setAdmin(false); renderAdminPage(root); });
   root.querySelector('#pin-form').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -157,6 +186,8 @@ function bindAdmin(root) {
     toast('PIN atualizado.');
   });
 
+  root.querySelectorAll('[data-up]').forEach((b) => b.addEventListener('click', () => moverAula(b.dataset.up, -1, root)));
+  root.querySelectorAll('[data-down]').forEach((b) => b.addEventListener('click', () => moverAula(b.dataset.down, 1, root)));
   root.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => openAulaModal(root, b.dataset.edit)));
   root.querySelectorAll('[data-arquivos]').forEach((b) => b.addEventListener('click', () => openArquivosModal(root, b.dataset.arquivos)));
   root.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
@@ -190,6 +221,22 @@ function bindAdmin(root) {
   });
 }
 
+/* Move a aula uma posição na ordem global do curso. */
+function moverAula(aulaId, direcao, root) {
+  const aulas = getAulas().sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0));
+  const i = aulas.findIndex((a) => a.id === aulaId);
+  const j = i + direcao;
+  if (i < 0 || j < 0 || j >= aulas.length) return;
+  const a = aulas[i];
+  const b = aulas[j];
+  const tmp = a.ordem ?? 0;
+  a.ordem = b.ordem ?? 0;
+  b.ordem = tmp;
+  saveAulas(aulas);
+  toast('Ordem das aulas atualizada.');
+  renderAdminPage(root);
+}
+
 /* -------------------------------------------------------------- modais */
 function modalRoot() {
   return document.getElementById('modal-root');
@@ -197,28 +244,59 @@ function modalRoot() {
 
 function openModal(html) {
   const root = modalRoot();
-  root.innerHTML = `<div class="modal-backdrop" data-close="1"><div class="modal">${html}</div></div>`;
+  const focoAnterior = document.activeElement;
+  root.innerHTML = `<div class="modal-backdrop" data-close="1">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">${html}</div>
+  </div>`;
   root.querySelector('[data-close]').addEventListener('click', (e) => {
     if (e.target.dataset.close) closeModal();
   });
+  document.removeEventListener('keydown', escClose);
   document.addEventListener('keydown', escClose);
+  const titulo = root.querySelector('h2');
+  if (titulo) titulo.id = 'modal-title';
+  const primeiro = root.querySelector('input, select, textarea, button');
+  if (primeiro) primeiro.focus();
+  root._focoAnterior = focoAnterior;
   return root;
 }
 
 function escClose(e) {
-  if (e.key === 'Escape') closeModal();
+  if (e.key === 'Escape') {
+    closeModal();
+    return;
+  }
+  // Mantém o foco dentro do modal
+  if (e.key !== 'Tab') return;
+  const root = modalRoot();
+  const focaveis = [...root.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])')];
+  if (!focaveis.length) return;
+  const primeiro = focaveis[0];
+  const ultimo = focaveis[focaveis.length - 1];
+  if (e.shiftKey && document.activeElement === primeiro) {
+    e.preventDefault();
+    ultimo.focus();
+  } else if (!e.shiftKey && document.activeElement === ultimo) {
+    e.preventDefault();
+    primeiro.focus();
+  }
 }
 
 function closeModal() {
-  modalRoot().innerHTML = '';
+  const root = modalRoot();
+  const anterior = root._focoAnterior;
+  root.innerHTML = '';
+  root._focoAnterior = null;
   document.removeEventListener('keydown', escClose);
+  if (anterior && typeof anterior.focus === 'function') anterior.focus();
 }
 
 function openAulaModal(root, aulaId) {
   const aula = aulaId ? getAula(aulaId) : null;
   const modulos = getModulos().sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0));
   const data = aula || {
-    id: uid('aula'), titulo: '', descricao: '', moduloId: modulos[0]?.id || '', ordem: 1,
+    id: uid('aula'), titulo: '', descricao: '', moduloId: modulos[0]?.id || '',
+    ordem: (getAulas().reduce((max, a) => Math.max(max, a.ordem ?? 0), 0) || 0) + 1,
     youtubeUrl: '', publicado: true,
   };
   openModal(`
@@ -261,7 +339,7 @@ function openAulaModal(root, aulaId) {
     const id = parseYouTubeId(urlInput.value);
     preview.innerHTML = id
       ? `<img class="yt-preview" src="${esc(youtubeThumb(id))}" alt=""><span>ID detectado: <code>${esc(id)}</code></span>`
-      : '<span>Link inválido ou vazio — use um link do YouTube (watch, youtu.be, shorts ou embed).</span>';
+      : '<span>Link inválido ou vazio. Use um link do YouTube (watch, youtu.be, shorts ou embed).</span>';
   };
   urlInput.addEventListener('input', upd);
   upd();
@@ -329,7 +407,7 @@ async function openArquivosModal(root, aulaId) {
   const aula = getAula(aulaId);
   if (!aula) return;
   openModal(`
-    <h2>Arquivos — ${esc(aula.titulo)}</h2>
+    <h2>Arquivos: ${esc(aula.titulo)}</h2>
     <form id="arq-form" class="upload">
       <label class="dropzone" for="f-arq">
         <strong>Enviar documentos</strong>
@@ -345,10 +423,18 @@ async function openArquivosModal(root, aulaId) {
     e.preventDefault();
     const input = m.querySelector('#f-arq');
     if (!input.files.length) return toast('Selecione ao menos um arquivo.', 'warn');
-    for (const f of Array.from(input.files)) await saveFile(aulaId, f);
-    input.value = '';
-    toast('Arquivo(s) enviado(s).');
-    await refreshArqList(m, aulaId);
+    const btn = m.querySelector('#arq-form button');
+    btn.disabled = true;
+    try {
+      for (const f of Array.from(input.files)) await saveFile(aulaId, f);
+      input.value = '';
+      toast('Arquivo(s) enviado(s).');
+      await refreshArqList(m, aulaId);
+    } catch (err) {
+      toast(err.message || 'Falha ao enviar o arquivo.', 'error');
+    } finally {
+      btn.disabled = false;
+    }
   });
   await refreshArqList(m, aulaId);
 }
