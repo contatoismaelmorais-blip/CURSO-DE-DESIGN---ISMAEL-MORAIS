@@ -58,6 +58,27 @@ function navigate() {
   else renderHome();
 }
 
+/* ------------------------------------------------------------ bento grid */
+/* Distribui as aulas de um módulo em blocos que fecham linhas inteiras de
+   12 colunas: par (7+5), trio (4+4+4) ou faixa (12). Sem buraco no grid. */
+export function bentoClasses(lista = []) {
+  const classes = [];
+  let rest = lista.length;
+  while (rest > 0) {
+    if (rest >= 3 && rest % 3 !== 1) {
+      classes.push('card--terco', 'card--terco', 'card--terco');
+      rest -= 3;
+    } else if (rest >= 2) {
+      classes.push('card--destaque', 'card--par');
+      rest -= 2;
+    } else {
+      classes.push('card--faixa');
+      rest -= 1;
+    }
+  }
+  return classes;
+}
+
 /* ------------------------------------------------------------------ home */
 function renderHome() {
   const aulas = aulaOrdenadas();
@@ -67,11 +88,12 @@ function renderHome() {
     .map((mod) => {
       const lista = aulas.filter((a) => a.moduloId === mod.id);
       if (!lista.length) return '';
+      const bento = bentoClasses(lista);
       const cards = lista
-        .map((a) => {
+        .map((a, i) => {
           const thumb = youtubeThumb(a.youtubeId);
           return `
-          <article class="card">
+          <article class="card ${bento[i]}">
             <a class="card-thumb" href="#/aula/${esc(a.id)}" tabindex="-1" aria-hidden="true">
               ${thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy">` : '<span class="card-thumb-empty"></span>'}
               <span class="card-play" aria-hidden="true">▶</span>

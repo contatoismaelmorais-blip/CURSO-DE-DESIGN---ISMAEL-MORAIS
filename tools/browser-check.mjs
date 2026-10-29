@@ -112,6 +112,47 @@ try {
     check('Imagem antiga mantida como recuo do fundo', home.fundo === true);
     check('Sem rolagem horizontal no desktop', home.overflowX === false);
     check('Sem erros de console na home', page.consoleErrors.length === 0, page.consoleErrors[0] || '');
+
+    // Bento grid: 12 colunas, linhas fechadas e cartões de tamanhos diferentes
+    const bento = await page.eval(() =>
+      [...document.querySelectorAll('.grid')].map((g) => {
+        const estilo = getComputedStyle(g);
+        return {
+          colunas: estilo.gridTemplateColumns.split(' ').filter(Boolean).length,
+          gap: parseFloat(estilo.gap) || 0,
+          largura: g.getBoundingClientRect().width,
+          cards: [...g.querySelectorAll('.card')].map((c) => ({
+            classe: [...c.classList].find((x) => x.startsWith('card--')) || '',
+            largura: c.getBoundingClientRect().width,
+          })),
+        };
+      }),
+    );
+    check(
+      'Bento: cada módulo usa uma grade de 12 colunas',
+      bento.length > 0 && bento.every((g) => g.colunas === 12),
+      bento.map((g) => `${g.cards.length} cards / ${g.colunas} colunas`).join(' · '),
+    );
+    check(
+      'Bento: as linhas fecham sem buraco',
+      bento.every((g) => {
+        const soma = g.cards.reduce((t, c) => t + c.largura, 0) + Math.max(0, g.cards.length - 1) * g.gap;
+        return Math.abs(soma - g.largura) < 2;
+      }),
+      bento.map((g) => `${g.cards.map((c) => c.classe.replace('card--', '')).join('+')}`).join(' · '),
+    );
+    check(
+      'Bento: destaque (7) e par (5) com larguras diferentes',
+      bento.some((g) => new Set(g.cards.map((c) => Math.round(c.largura))).size > 1),
+      bento.map((g) => g.cards.map((c) => `${c.classe.replace('card--', '')}:${Math.round(c.largura)}px`).join('+')).join(' · '),
+    );
+    check(
+      'Bento: módulo com uma aula vira faixa de largura total',
+      bento.some(
+        (g) => g.cards.length === 1 && g.cards[0].classe === 'card--faixa' && Math.abs(g.cards[0].largura - g.largura) < 2,
+      ),
+      bento.map((g) => g.cards[0]?.classe.replace('card--', '') || '').join(' · '),
+    );
     await page.screenshot({ path: join(OUT, 'home.jpg'), quality: 80 });
     await page.close();
   });
@@ -345,6 +386,44 @@ try {
     );
     check('Aula criada pelo admin aparece na tabela', criada.some((r) => r.includes('Aula de teste automático')), criada.find((r) => r.includes('teste')) || criada[0] || '');
     check('Aula criada guarda o ID do YouTube', criada.some((r) => r.includes('aqz-KE-bpKQ')));
+
+    // Importação de aulas: leitura da lista de links (caminho sem rede)
+    const antes = await page.eval(() => document.querySelectorAll('table tbody tr').length);
+    const previa = await page.eval(async () => {
+      const painel = document.querySelector('#import-form');
+      const lista = document.querySelector('#imp-lista');
+      if (!painel || !lista) return { erro: 'painel de importação ausente' };
+      lista.value = 'https://youtu.be/dQw4w9WgXcQ\nhttps://youtu.be/aqz-KE-bpKQ';
+      document.querySelector('#import-lista-form').requestSubmit();
+      await new Promise((r) => setTimeout(r, 300));
+      return {
+        itens: document.querySelectorAll('#imp-preview .imp-item').length,
+        marcados: document.querySelectorAll('#imp-preview [data-imp-check]:checked').length,
+        dups: document.querySelectorAll('#imp-preview .imp-tag--dup').length,
+        status: (document.querySelector('#imp-status')?.textContent || '').trim(),
+      };
+    });
+    check(
+      'Admin lê a lista de links e monta a prévia',
+      previa.itens === 2 && previa.marcados === 1,
+      previa.erro || `${previa.itens} itens · ${previa.marcados} marcado(s) · ${previa.status}`,
+    );
+    check('Vídeo já cadastrado é marcado como duplicado', previa.dups === 1, `${previa.dups} aviso(s)`);
+
+    const importado = await page.eval(async () => {
+      document.querySelector('#imp-confirmar')?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      return {
+        linhas: document.querySelectorAll('table tbody tr').length,
+        tem: [...document.querySelectorAll('table tbody tr')].some((r) => r.textContent.includes('dQw4w9WgXcQ')),
+        toast: (document.querySelector('#toast')?.textContent || '').trim(),
+      };
+    });
+    check(
+      'Importação cria a aula do vídeo novo e ignora o duplicado',
+      importado.linhas === antes + 1 && importado.tem,
+      `${antes} → ${importado.linhas} linhas · ${importado.toast}`,
+    );
     check('Linha da aula mostra título e ações', painel.linha.length > 20, painel.linha);
 
     // A contagem de arquivos enviada pelo aluno aparece no painel do admin

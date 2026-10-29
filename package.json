@@ -6,11 +6,17 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node test/parse.test.mjs && node test/db.test.mjs && node test/estatico.test.mjs",
-    "check": "node test/parse.test.mjs && node test/db.test.mjs && node test/estatico.test.mjs",
+    "test": "node test/parse.test.mjs && node test/db.test.mjs && node test/youtube.test.mjs && node test/estatico.test.mjs",
+    "check": "node test/parse.test.mjs && node test/db.test.mjs && node test/youtube.test.mjs && node test/estatico.test.mjs",
     "browser-check": "vite build && node tools/browser-check.mjs",
     "video:info": "node tools/video-codec.mjs",
-    "lint": "node taste-skill-main/skills/taste-skill/scripts/lint.mjs index.html styles.css app.js admin.js store.js db.js util.js --app"
+    "assets:hash": "node tools/assets-hash.mjs",
+    "assets:limpar": "node tools/assets-hash.mjs --limpar",
+    "impeccable:install": "npx --yes impeccable install",
+    "taste:install": "node tools/install-taste.mjs",
+    "taste:uninstall": "node tools/install-taste.mjs --uninstall",
+    "lint": "node taste-skill-main/skills/taste-skill/scripts/lint.mjs index.html styles.css app.js admin.js store.js db.js util.js youtube.js motion.js --app",
+    "lint:skill": "node .claude/skills/design-taste-frontend/scripts/lint.mjs index.html styles.css app.js admin.js store.js db.js util.js youtube.js motion.js --app"
   },
   "devDependencies": {
     "vite": "8.3.2"

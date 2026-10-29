@@ -13,8 +13,12 @@ import {
   uid,
 } from './store.js';
 import { listFiles, saveFile, deleteFile, downloadFile } from './db.js';
+import { buscarVideosDoCanal, parseUrlList } from './youtube.js';
 import { esc, formatSize, formatDate } from './util.js';
 import content from './content.json';
+
+// Estado da importação em andamento (some do painel quando a página é redesenhada).
+let importacao = { itens: [], feedUrl: '' };
 
 function toast(msg, kind = 'ok') {
   const el = document.getElementById('toast');
@@ -115,6 +119,42 @@ export function renderAdminPage(root) {
     </section>
 
     <section class="panel">
+      <h2>Importar aulas do canal do YouTube</h2>
+      <p class="muted">Cole o link do canal (youtube.com/@canal), o link do feed RSS ou a lista de links das aulas. Cada vídeo vira uma aula no módulo escolhido; os materiais continuam sendo enviados pela aba Arquivos.</p>
+      <form class="card-form" id="import-form">
+        <label>Link do canal ou feed RSS
+          <input type="text" id="imp-url" placeholder="https://www.youtube.com/@canal">
+        </label>
+        <div class="grid-2">
+          <label>Módulo de destino
+            <select id="imp-modulo">
+              ${modulos.length ? modulos.map((m) => `<option value="${esc(m.id)}">${esc(m.nome)}</option>`).join('') : '<option value="">Criar módulo novo</option>'}
+            </select>
+          </label>
+          <label>Ao importar
+            <select id="imp-publicado">
+              <option value="1">Publicar</option>
+              <option value="0">Rascunho</option>
+            </select>
+          </label>
+        </div>
+        <div class="row-actions">
+          <button class="btn btn--primary" type="submit">Buscar vídeos</button>
+        </div>
+        <p class="imp-aviso" id="imp-status"></p>
+      </form>
+      <form class="card-form" id="import-lista-form">
+        <label>Ou cole os links das aulas (um por linha)
+          <textarea id="imp-lista" rows="3" placeholder="https://www.youtube.com/watch?v=..."></textarea>
+        </label>
+        <div class="row-actions">
+          <button class="btn btn--ghost" type="submit">Ler lista de links</button>
+        </div>
+      </form>
+      <div id="imp-preview"></div>
+    </section>
+
+    <section class="panel">
       <h2>Configurações</h2>
       <form class="card-form" id="pin-form">
         <label>Alterar PIN do admin
@@ -196,6 +236,44 @@ function bindAdmin(root) {
     input.click();
   });
   root.querySelector('#sair')?.addEventListener('click', () => { setAdmin(false); renderAdminPage(root); });
+  /* ------------------------------------------------ importação do canal */
+  root.querySelector('#import-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const url = root.querySelector('#imp-url').value.trim();
+    const status = root.querySelector('#imp-status');
+    const botao = root.querySelector('#import-form button[type="submit"]');
+    if (!url) {
+      status.textContent = 'Cole o link do canal ou do feed RSS.';
+      return;
+    }
+    botao.disabled = true;
+    status.textContent = 'Buscando vídeos no canal…';
+    try {
+      const { itens, feedUrl } = await buscarVideosDoCanal(url);
+      importacao = { itens, feedUrl };
+      mostrarPreview(root);
+      status.textContent = `${itens.length} vídeo(s) encontrado(s) no canal.`;
+    } catch (err) {
+      importacao = { itens: [], feedUrl: '' };
+      root.querySelector('#imp-preview').innerHTML = '';
+      status.textContent = err.message || 'Não foi possível ler o canal.';
+    } finally {
+      botao.disabled = false;
+    }
+  });
+
+  root.querySelector('#import-lista-form')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const itens = parseUrlList(root.querySelector('#imp-lista').value);
+    if (!itens.length) {
+      toast('Nenhum link do YouTube reconhecido na lista.', 'warn');
+      return;
+    }
+    importacao = { itens, feedUrl: '' };
+    mostrarPreview(root);
+    const status = root.querySelector('#imp-status');
+    if (status) status.textContent = `${itens.length} link(s) lido(s) da lista.`;
+  });
   root.querySelector('#pin-form')?.addEventListener('submit', (e) => {
     e.preventDefault();
     const pin = root.querySelector('#novo-pin').value.trim();
@@ -237,6 +315,107 @@ function bindAdmin(root) {
     const n = (await listFiles(cell.dataset.countFor)).length;
     cell.textContent = `${n} arquivo${n === 1 ? '' : 's'}`;
   });
+}
+
+/* --------------------------------------------------- importação do canal */
+/** Data do feed formatada para leitura (o feed devolve ISO 8601). */
+function dataFeed(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+/** Mostra a prévia dos vídeos encontrados, marcando os que já são aulas. */
+function mostrarPreview(root) {
+  const box = root.querySelector('#imp-preview');
+  if (!box) return;
+  const itens = importacao.itens;
+  if (!itens.length) {
+    box.innerHTML = '';
+    return;
+  }
+  const existentes = new Set(getAulas().map((a) => a.youtubeId).filter(Boolean));
+  box.innerHTML = `
+    <div class="imp-lista">
+      ${itens
+        .map(
+          (it) => `
+        <label class="imp-item">
+          <input type="checkbox" value="${esc(it.youtubeId)}" data-imp-check ${existentes.has(it.youtubeId) ? '' : 'checked'}>
+          <img class="imp-thumb" src="${esc(it.thumb)}" alt="" loading="lazy">
+          <span class="imp-info">
+            <strong>${esc(it.titulo)}</strong>
+            <span>${it.publicado ? esc(dataFeed(it.publicado)) : 'sem data informada'}</span>
+          </span>
+          ${existentes.has(it.youtubeId) ? '<span class="imp-tag imp-tag--dup">já cadastrada</span>' : ''}
+        </label>`
+        )
+        .join('')}
+    </div>
+    <div class="row-actions" style="margin-top:14px">
+      <button class="btn btn--primary" id="imp-confirmar">Importar selecionadas</button>
+      <button class="btn btn--ghost" id="imp-limpar">Limpar lista</button>
+    </div>`;
+
+  box.querySelector('#imp-confirmar')?.addEventListener('click', () => confirmarImportacao(root));
+  box.querySelector('#imp-limpar')?.addEventListener('click', () => {
+    importacao = { itens: [], feedUrl: '' };
+    box.innerHTML = '';
+    const status = root.querySelector('#imp-status');
+    if (status) status.textContent = '';
+  });
+}
+
+/** Cria as aulas a partir dos vídeos marcados na prévia. */
+function confirmarImportacao(root) {
+  const box = root.querySelector('#imp-preview');
+  if (!box) return;
+  const marcados = new Set(
+    [...box.querySelectorAll('[data-imp-check]')].filter((c) => c.checked).map((c) => c.value),
+  );
+  if (!marcados.size) return toast('Selecione ao menos um vídeo.', 'warn');
+
+  let modulos = getModulos();
+  let modulo = modulos.find((m) => m.id === root.querySelector('#imp-modulo').value);
+  if (!modulo) {
+    modulo = { id: uid('mod'), nome: 'Aulas importadas', ordem: modulos.length + 1 };
+    modulos = [...modulos, modulo];
+    saveModulos(modulos);
+  }
+
+  const aulas = getAulas();
+  const existentes = new Set(aulas.map((a) => a.youtubeId).filter(Boolean));
+  let ordem = aulas.reduce((max, a) => Math.max(max, a.ordem ?? 0), 0);
+  const publicado = root.querySelector('#imp-publicado').value === '1';
+  let criadas = 0;
+
+  for (const item of importacao.itens) {
+    if (!marcados.has(item.youtubeId)) continue;
+    if (existentes.has(item.youtubeId)) continue;
+    ordem += 1;
+    aulas.push({
+      id: uid('aula'),
+      titulo: item.titulo,
+      descricao: item.canal ? `Vídeo do canal ${item.canal}.` : '',
+      moduloId: modulo.id,
+      ordem,
+      youtubeId: item.youtubeId,
+      publicado,
+      origem: 'youtube-import',
+      criadoEm: Date.now(),
+    });
+    existentes.add(item.youtubeId);
+    criadas += 1;
+  }
+
+  saveAulas(aulas);
+  importacao = { itens: [], feedUrl: '' };
+  toast(
+    criadas ? `${criadas} aula(s) importada(s).` : 'Nenhuma aula nova: os vídeos já estavam cadastrados.',
+    criadas ? 'ok' : 'warn',
+  );
+  renderAdminPage(root);
 }
 
 /* Move a aula uma posição na ordem global do curso. */
