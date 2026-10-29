@@ -9,6 +9,7 @@ import {
 import { listFiles, saveFile, downloadFile, deleteFile } from './db.js';
 import { renderAdminPage } from './admin.js';
 import { esc, formatSize, formatDate, extIcon } from './util.js';
+import { initFundoVideo } from './motion.js';
 import content from './content.json';
 
 const app = document.getElementById('conteudo');
@@ -48,6 +49,9 @@ function navigate() {
   document.querySelectorAll('[data-nav]').forEach((el) => {
     el.classList.toggle('is-active', el.dataset.nav === (route.name === 'admin' ? 'admin' : 'aluno'));
   });
+  // a rota muda o fundo (mais quieto no painel) e o estilo da tela
+  document.body.dataset.rota = route.name;
+  app.classList.toggle('is-admin', route.name === 'admin');
   window.scrollTo({ top: 0 });
   if (route.name === 'aula') renderAula(route.id);
   else if (route.name === 'admin') renderAdmin();
@@ -276,6 +280,7 @@ function renderAdmin() {
 /* ------------------------------------------------------------------ boot */
 document.querySelector('[data-brand]').textContent = content.brand;
 document.querySelector('[data-tagline]').textContent = content.tagline;
+initFundoVideo();
 
 window.addEventListener('hashchange', navigate);
 window.addEventListener('aulas:changed', () => {

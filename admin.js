@@ -61,47 +61,57 @@ export function renderAdminPage(root) {
     <section class="admin-head">
       <div>
         <h1>Painel do curso</h1>
-        <p class="muted">Cadastre aulas, defina os links do YouTube, títulos, ordem e os arquivos de cada aula.</p>
+        <p class="muted">${aulas.length} aula${aulas.length === 1 ? '' : 's'} em ${modulos.length} módulo${modulos.length === 1 ? '' : 's'}. Defina links do YouTube, títulos, ordem e os arquivos de cada aula.</p>
       </div>
       <div class="admin-actions">
         <button class="btn btn--primary" id="nova-aula">+ Nova aula</button>
         <button class="btn btn--ghost" id="novo-modulo">+ Novo módulo</button>
-        <button class="btn btn--ghost" id="exportar">Exportar dados</button>
-        <button class="btn btn--ghost" id="importar">Importar dados</button>
-        <button class="btn btn--ghost" id="abrir-painel">Ver como aluno</button>
-        <button class="btn btn--danger" id="sair">Sair</button>
       </div>
     </section>
 
     <section class="panel">
       <h2>Módulos</h2>
-      <ul class="module-list">
+      ${
+        modulos.length
+          ? `<ul class="module-list">
         ${modulos.map((m) => `
           <li>
             <span class="mod-nome">${esc(m.nome)}</span>
-            <span class="muted small">${aulas.filter((a) => a.moduloId === m.id).length} aula(s)</span>
+            <span class="muted small">${aulas.filter((a) => a.moduloId === m.id).length} aula${aulas.filter((a) => a.moduloId === m.id).length === 1 ? '' : 's'}</span>
             <span class="row-actions">
               <button class="btn btn--small" data-edit-modulo="${esc(m.id)}">Editar</button>
               <button class="btn btn--small btn--danger" data-del-modulo="${esc(m.id)}">Excluir</button>
             </span>
           </li>`).join('')}
-      </ul>
+      </ul>`
+          : `<div class="empty-state">
+             <p>Nenhum módulo cadastrado. As aulas ficam agrupadas por módulo.</p>
+             <button class="btn btn--ghost" id="primeiro-modulo">+ Criar módulo</button>
+           </div>`
+      }
     </section>
 
     <section class="panel">
       <h2>Aulas</h2>
-      <div class="table-wrap">
+      ${
+        aulas.length
+          ? `<div class="table-wrap">
         <table class="table">
           <thead>
             <tr>
-              <th>Aula</th><th>Módulo</th><th>Vídeo (YouTube)</th><th>Arquivos</th><th>Status</th><th>Ações</th>
+              <th>Aula</th><th>Módulo</th><th>Vídeo (YouTube)</th><th class="num">Arquivos</th><th>Status</th><th>Ações</th>
             </tr>
           </thead>
           <tbody>
-            ${aulas.length ? aulas.sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0)).map((a) => adminRow(a, modulos)).join('') : '<tr><td colspan="6" class="muted">Nenhuma aula cadastrada.</td></tr>'}
+            ${aulas.sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0)).map((a) => adminRow(a, modulos)).join('')}
           </tbody>
         </table>
-      </div>
+      </div>`
+          : `<div class="empty-state">
+             <p>Nenhuma aula cadastrada. Comece pela primeira aula do curso.</p>
+             <button class="btn btn--primary" id="primeira-aula">+ Cadastrar a primeira aula</button>
+           </div>`
+      }
     </section>
 
     <section class="panel">
@@ -113,6 +123,12 @@ export function renderAdminPage(root) {
         <button class="btn btn--primary" type="submit">Salvar PIN</button>
       </form>
       <p class="muted small">Os dados ficam salvos neste navegador (localStorage + IndexedDB). Nada é enviado para servidores externos além do player do YouTube.</p>
+      <div class="admin-actions admin-actions--row">
+        <button class="btn btn--ghost" id="exportar">Exportar dados</button>
+        <button class="btn btn--ghost" id="importar">Importar dados</button>
+        <button class="btn btn--ghost" id="abrir-painel">Ver como aluno</button>
+        <button class="btn btn--danger" id="sair">Sair</button>
+      </div>
     </section>
   `;
 
@@ -130,7 +146,7 @@ function adminRow(a, modulos) {
       </td>
       <td>${esc(mod ? mod.nome : 'sem módulo')}</td>
       <td>${id ? `<code>${id}</code>` : '<span class="muted">sem link</span>'}</td>
-      <td class="files-count" data-count-for="${esc(a.id)}">…</td>
+      <td class="files-count num" data-count-for="${esc(a.id)}">…</td>
       <td>${a.publicado === false ? '<span class="badge badge--off">Rascunho</span>' : '<span class="badge">Publicado</span>'}</td>
       <td class="row-actions">
         <button class="btn btn--small" data-up="${esc(a.id)}" title="Subir">↑</button>
@@ -143,10 +159,12 @@ function adminRow(a, modulos) {
 }
 
 function bindAdmin(root) {
-  root.querySelector('#nova-aula').addEventListener('click', () => openAulaModal(root, null));
-  root.querySelector('#novo-modulo').addEventListener('click', () => openModuloModal(root, null));
-  root.querySelector('#abrir-painel').addEventListener('click', () => { location.hash = '#/'; });
-  root.querySelector('#exportar').addEventListener('click', () => {
+  root.querySelector('#nova-aula')?.addEventListener('click', () => openAulaModal(root, null));
+  root.querySelector('#primeira-aula')?.addEventListener('click', () => openAulaModal(root, null));
+  root.querySelector('#novo-modulo')?.addEventListener('click', () => openModuloModal(root, null));
+  root.querySelector('#primeiro-modulo')?.addEventListener('click', () => openModuloModal(root, null));
+  root.querySelector('#abrir-painel')?.addEventListener('click', () => { location.hash = '#/'; });
+  root.querySelector('#exportar')?.addEventListener('click', () => {
     const payload = JSON.stringify({ aulas: getAulas(), modulos: getModulos() }, null, 2);
     const blob = new Blob([payload], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -157,7 +175,7 @@ function bindAdmin(root) {
     setTimeout(() => URL.revokeObjectURL(url), 3000);
     toast('Backup exportado.');
   });
-  root.querySelector('#importar').addEventListener('click', () => {
+  root.querySelector('#importar')?.addEventListener('click', () => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'application/json,.json';
@@ -177,8 +195,8 @@ function bindAdmin(root) {
     });
     input.click();
   });
-  root.querySelector('#sair').addEventListener('click', () => { setAdmin(false); renderAdminPage(root); });
-  root.querySelector('#pin-form').addEventListener('submit', (e) => {
+  root.querySelector('#sair')?.addEventListener('click', () => { setAdmin(false); renderAdminPage(root); });
+  root.querySelector('#pin-form')?.addEventListener('submit', (e) => {
     e.preventDefault();
     const pin = root.querySelector('#novo-pin').value.trim();
     if (!pin) return toast('Informe um PIN.', 'warn');

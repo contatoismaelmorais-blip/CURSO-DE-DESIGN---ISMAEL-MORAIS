@@ -23,6 +23,7 @@ const MIME = {
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
+  '.mp4': 'video/mp4',
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
 };
@@ -32,8 +33,27 @@ const server = createServer((req, res) => {
     const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
     let file = join(ROOT, path === '/' ? 'index.html' : path);
     if (!file.startsWith(ROOT) || !existsSync(file) || statSync(file).isDirectory()) file = join(ROOT, 'index.html');
+    const stat = statSync(file);
+    const type = MIME[extname(file).toLowerCase()] || 'application/octet-stream';
+    // O player precisa de respostas parciais para conseguir avançar no vídeo.
+    const range = req.headers.range;
+    if (range) {
+      const m = /bytes=(\d*)-(\d*)/.exec(range);
+      const start = m && m[1] ? parseInt(m[1], 10) : 0;
+      const end = m && m[2] ? parseInt(m[2], 10) : stat.size - 1;
+      res.writeHead(206, {
+        'content-type': type,
+        'content-range': `bytes ${start}-${end}/${stat.size}`,
+        'accept-ranges': 'bytes',
+        'content-length': end - start + 1,
+        'cache-control': 'no-store',
+      });
+      createReadStream(file, { start, end }).pipe(res);
+      return;
+    }
     res.writeHead(200, {
-      'content-type': MIME[extname(file).toLowerCase()] || 'application/octet-stream',
+      'content-type': type,
+      'accept-ranges': 'bytes',
       'cache-control': 'no-store',
     });
     createReadStream(file).pipe(res);
@@ -81,18 +101,127 @@ try {
       thumbs: document.querySelectorAll('.card-thumb img').length,
       metas: [...document.querySelectorAll('[data-files-for]')].map((e) => e.textContent.trim()),
       fundo: getComputedStyle(document.querySelector('.fundo')).backgroundImage.includes('fundo.png'),
+      video: !!document.querySelector('[data-fundo-video]'),
       overflowX: document.documentElement.scrollWidth > window.innerWidth + 1,
     }));
     check('Home renderiza o hero', home.h1.length > 10, `h1: "${home.h1}"`);
     check('Home lista as aulas por módulo', home.cards >= 3 && home.modulos >= 2, `${home.cards} cards em ${home.modulos} módulos`);
     check('Cards mostram a thumbnail do YouTube', home.thumbs === home.cards, `${home.thumbs}/${home.cards} thumbnails`);
     check('Contagem de materiais aparece nos cards', home.metas.every((t) => t.length > 0), home.metas[0] || '');
-    check('FUNDO.png aplicado como fundo da plataforma', home.fundo === true);
+    check('Vídeo de fundo no lugar da imagem fixa', home.video === true);
+    check('Imagem antiga mantida como recuo do fundo', home.fundo === true);
     check('Sem rolagem horizontal no desktop', home.overflowX === false);
     check('Sem erros de console na home', page.consoleErrors.length === 0, page.consoleErrors[0] || '');
     await page.screenshot({ path: join(OUT, 'home.jpg'), quality: 80 });
     await page.close();
   });
+  /* -------------------------------------------------- fundo em vídeo */
+  await step('fundo em vídeo', async () => {
+    const page = await browser.newPage({ width: 1440, height: 900 });
+    await page.goto(`${base}#/`, { timeoutMs: 20000, settleMs: 1500 });
+    const info = await page.eval(() => {
+      const v = document.querySelector('[data-fundo-video]');
+      return {
+        existe: !!v,
+        src: v?.currentSrc || v?.querySelector('source')?.src || '',
+        largura: v?.videoWidth || 0,
+        altura: v?.videoHeight || 0,
+        duracao: v?.duration || 0,
+        pausado: v?.paused ?? true,
+        tempo: v?.currentTime || 0,
+        mudo: v?.muted ?? false,
+        inline: v?.hasAttribute('playsinline') ?? false,
+      };
+    });
+    check('Elemento de vídeo do fundo existe', info.existe === true, info.src.split('/').pop());
+    check('Fonte do vídeo é o arquivo do projeto', info.src.includes('fundo.mp4'), info.src.split('/').pop());
+    check('Vídeo mudo e em linha (autoplay permitido)', info.mudo === true && info.inline === true);
+
+    // O arquivo é H.264: alguns builds de navegador não decodificam.
+    if (info.largura > 0) {
+      check('Vídeo do fundo decodificado', true, `${info.largura}x${info.altura}, ${info.duracao.toFixed(2)}s`);
+    } else {
+      check('Vídeo do fundo decodificado', false, 'o navegador não decodificou o H.264 (o arquivo está correto)');
+    }
+
+    // Movimento reduzido (padrão do harness): o quadro do vídeo fica fixo.
+    const reduzido = await page.eval(async () => {
+      const v = document.querySelector('[data-fundo-video]');
+      await new Promise((r) => setTimeout(r, 700));
+      return { pausado: v.paused, tempo: v.currentTime };
+    });
+    check(
+      'Movimento reduzido: o fundo fica parado no primeiro quadro',
+      reduzido.pausado === true && reduzido.tempo === 0,
+      `pausado=${reduzido.pausado} t=${reduzido.tempo.toFixed(2)}s`,
+    );
+
+    // Sem a restrição de movimento: o vídeo toca e a animação segue a rolagem.
+    await page.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }],
+    });
+    await page.send('Page.reload');
+    await sleep(1800);
+
+    // Toca sozinho quando a página está parada
+    const parado = await page.eval(async () => {
+      const v = document.querySelector('[data-fundo-video]');
+      const t0 = v.currentTime;
+      await new Promise((r) => setTimeout(r, 900));
+      return { t0, t1: v.currentTime, pausado: v.paused };
+    });
+    check('Vídeo toca sozinho com a página parada', parado.pausado === false && parado.t1 !== parado.t0, `t=${parado.t1.toFixed(2)}s`);
+
+    // A animação acompanha a rolagem: o playhead caminha com a página
+    const rolagem = await page.eval(async () => {
+      const v = document.querySelector('[data-fundo-video]');
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      const espera = (ms) => new Promise((r) => setTimeout(r, ms));
+      // O CSS usa scroll-behavior suave; o teste precisa de saltos imediatos.
+      document.documentElement.style.scrollBehavior = 'auto';
+
+      const irPara = async (y) => {
+        window.scrollTo(0, y);
+        for (let i = 0; i < 40; i += 1) {
+          await espera(25);
+          if (Math.abs(window.scrollY - y) <= 2) break;
+        }
+        // Refaz um movimento real de rolagem para o fundo reagir ao gesto.
+        window.scrollTo(0, y + 1);
+        await espera(40);
+        window.scrollTo(0, y);
+        await espera(120);
+        return v.currentTime;
+      };
+
+      const fim = await irPara(max);
+      const yFim = getComputedStyle(v).getPropertyValue('--fundo-y').trim();
+      const meio = await irPara(Math.round(max / 2));
+      const inicio = await irPara(0);
+      return { max, fim, meio, inicio, duracao: v.duration, yFim };
+    });
+
+    if (rolagem.max > 100) {
+      check(
+        'Rolagem leva o playhead do vídeo junto',
+        rolagem.fim > rolagem.meio && rolagem.meio > rolagem.inicio,
+        `topo ${rolagem.inicio.toFixed(2)}s · meio ${rolagem.meio.toFixed(2)}s · fim ${rolagem.fim.toFixed(2)}s`,
+      );
+      check(
+        'Quadro do vídeo acompanha a posição da rolagem',
+        Math.abs(rolagem.meio - rolagem.duracao / 2) < 1.2 && rolagem.fim > rolagem.duracao * 0.8,
+        `meio ${rolagem.meio.toFixed(2)}s de ${rolagem.duracao.toFixed(2)}s`,
+      );
+      check('Fundo desliza com a rolagem (parallax)', rolagem.yFim !== '' && rolagem.yFim !== '0px', rolagem.yFim);
+    } else {
+      check('Página rola o suficiente para testar o fundo', false, `scroll máximo ${rolagem.max}px`);
+    }
+
+    await page.screenshot({ path: join(OUT, 'fundo-video.jpg'), quality: 80 });
+    check('Sem erros de console com o vídeo', page.consoleErrors.length === 0, page.consoleErrors[0] || '');
+    await page.close();
+  });
+
   /* --------------------------------------------------------- página da aula */
   await step('página da aula', async () => {
     const page = await browser.newPage({ width: 1440, height: 900 });
@@ -270,5 +399,5 @@ try {
 const falhas = results.filter((r) => !r.ok);
 console.log('');
 console.log(`RESULTADO: ${results.length - falhas.length}/${results.length} verificações passaram.`);
-console.log(`Prints: .taste-skill/shots (home.jpg, aula.jpg, admin.jpg)`);
+console.log(`Prints: .taste-skill/shots (home.jpg, fundo-video.jpg, aula.jpg, admin.jpg)`);
 process.exit(falhas.length ? 1 : 0);
