@@ -54,7 +54,10 @@ html{scroll-behavior:smooth}
   *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}
 }
 html,body{min-height:100%}
-body{margin:0;background:var(--bg);color:var(--text);overflow-x:hidden;line-height:var(--lh-body)}
+/* O body fica transparente de propósito: com cor própria ele pinta por cima
+   das camadas de fundo e esconde o vídeo (o fundo do html é que vira a cor
+   base da tela). */
+body{margin:0;background:transparent;color:var(--text);overflow-x:hidden;line-height:var(--lh-body)}
 img{max-width:100%;display:block}
 a{color:inherit;text-decoration:none}
 button,input,select,textarea{font:inherit;color:inherit}
@@ -70,27 +73,31 @@ p{text-wrap:pretty}
 
 /* ---------------------------------------------------------- fundo do app */
 /* Fundo: o vídeo é o elemento principal; a imagem é a capa e o recuo para
-   navegadores que não decodificam o arquivo. */
+   navegadores que não decodificam o arquivo.
+   Camada real (z-index 0) — o conteúdo do site recebe z-index próprio e
+   fica acima, sem depender de z-index negativo nem de propagação de fundo. */
 .fundo{
-  position:fixed;inset:0;z-index:-2;overflow:hidden;
+  position:fixed;inset:0;z-index:0;overflow:hidden;
   background:#07060d url("/fundo.png") center/cover no-repeat;
 }
 .fundo-video{
   position:absolute;inset:0;width:100%;height:100%;
   object-fit:cover;object-position:50% 42%;
+  /* O zoom de 8% é a margem de segurança do parallax: o vídeo anda 3% da
+     altura, então a escala cobre a folga e nenhuma borda aparece. */
   transform:scale(1.08) translate3d(0,var(--fundo-y,0px),0);
   will-change:transform;
 }
 .grain{
-  position:fixed;inset:0;z-index:-1;pointer-events:none;
-  --scrim-1:.42; --scrim-2:.72; --scrim-3:.9;
+  position:fixed;inset:0;z-index:1;pointer-events:none;
+  --scrim-1:.20; --scrim-2:.46; --scrim-3:.68;
   background:
     radial-gradient(120% 80% at 50% 0%, rgb(var(--brand-yellow-rgb) / .20), transparent 55%), /* taste-skill-ignore: brilho do fundo da marca */
     radial-gradient(90% 70% at 0% 100%, rgb(var(--brand-violet-rgb) / .30), transparent 60%), /* taste-skill-ignore: brilho do fundo da marca */
     linear-gradient(180deg, rgb(7 6 13 / var(--scrim-1)) 0%, rgb(7 6 13 / var(--scrim-2)) 45%, rgb(7 6 13 / var(--scrim-3)) 100%); /* taste-skill-ignore: véu de leitura sobre o vídeo de fundo */
 }
 /* tela de trabalho: o fundo fica mais quieto no painel do admin */
-body[data-rota="admin"] .grain{--scrim-1:.80; --scrim-2:.93; --scrim-3:.97}
+body[data-rota="admin"] .grain{--scrim-1:.55; --scrim-2:.75; --scrim-3:.88}
 .grain::after{
   content:"";position:absolute;inset:0;opacity:.35;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
@@ -120,7 +127,8 @@ body[data-rota="admin"] .grain{--scrim-1:.80; --scrim-2:.93; --scrim-3:.97}
 .nav a.is-active{background:var(--accent);color:var(--accent-ink);font-weight:600}
 
 /* --------------------------------------------------------------- layout */
-.app{max-width:1200px;margin:0 auto;padding:clamp(24px,4vw,56px) clamp(16px,4vw,48px) 120px}
+/* O conteúdo fica acima das camadas de fundo (vídeo e véu). */
+.app{position:relative;z-index:2;max-width:1200px;margin:0 auto;padding:clamp(24px,4vw,56px) clamp(16px,4vw,48px) 120px}
 .muted{color:var(--muted)}
 .small{font-size:12px}
 .empty{text-align:center;color:var(--muted);padding:60px 0}

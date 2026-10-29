@@ -1,12 +1,14 @@
 /* motion.js — fundo animado ligado à rolagem.
  *
- * O vídeo de fundo toca sozinho enquanto a página está parada. Quando o aluno
- * rola, o playhead caminha junto com a rolagem: a animação do vídeo acompanha o
- * scroll. Parou de rolar, o vídeo volta a tocar de onde parou.
+ * O vídeo de fundo fica tocando em loop o tempo todo: a rolagem não pausa
+ * nada. Ela apenas puxa o playhead para a posição da página (quando o trecho
+ * já está baixado) e desloca o fundo no parallax. Parou de rolar, o vídeo
+ * continua tocando de onde parou.
  * Com prefers-reduced-motion o quadro fica fixo (a capa da imagem). */
 
 const IDLE_MS = 260; // ms sem rolagem para o vídeo voltar a tocar sozinho
-const TOLERANCE = 0.05; // s: menor deslocamento do playhead que justifica um seek
+const CORRIGE = 0.25; // s: desvio do playhead que a rolagem corrige
+const ZONE_FIM = 0.5; // s: trecho final do vídeo em que ele toca sozinho (sem o loop reiniciar a imagem)
 const PARALLAX = 0.03; // fração da altura que o fundo percorre ao longo da página
 
 export function initFundoVideo() {
@@ -45,8 +47,10 @@ export function initFundoVideo() {
     const limite = Math.max(0, duration - 0.05);
     try {
       video.currentTime = Math.min(Math.max(0, t), limite);
+      return true;
     } catch {
       /* some navegadores recusam seek antes do metadata */
+      return false;
     }
   }
 
@@ -72,20 +76,20 @@ export function initFundoVideo() {
     // O fundo desliza devagar junto com a rolagem.
     video.style.setProperty('--fundo-y', `${(-PARALLAX * altura * p).toFixed(1)}px`);
 
-    if (!duration) {
-      if (video.paused) play();
-      return;
-    }
+    // O vídeo fica tocando sempre: nem a rolagem nem o fim do trecho o param.
+    if (video.paused) play();
 
-    if (rolando) {
-      // Durante a rolagem o quadro do vídeo é o da posição da página.
-      const alvo = p * duration;
-      if (Math.abs(video.currentTime - alvo) > TOLERANCE && bufferedAt(alvo)) {
-        if (!video.paused) video.pause();
-        seekTo(alvo);
-      }
-    } else if (video.paused) {
-      play();
+    if (!duration || !rolando) return; // parado, o vídeo toca sozinho em loop
+
+    // Durante a rolagem o playhead é puxado para a posição da página. A
+    // correção acontece sem pausar, para a animação continuar rodando.
+    const alvo = p * duration;
+    // No fim do arquivo não há trecho à frente: manter o playhead colado
+    // ali reiniciaria a imagem a cada volta do loop. Nessa zona o vídeo
+    // simplesmente continua tocando.
+    if (alvo > duration - ZONE_FIM) return;
+    if (Math.abs(video.currentTime - alvo) > CORRIGE && bufferedAt(alvo)) {
+      seekTo(alvo);
     }
   }
 
@@ -106,11 +110,18 @@ export function initFundoVideo() {
     if (reduce.matches) {
       video.pause();
       video.removeAttribute('autoplay');
-      try {
-        video.currentTime = 0;
-      } catch {
-        /* ignora */
-      }
+      // O atributo autoplay pode ter iniciado a reprodução antes do script:
+      // o quadro volta ao primeiro e o vídeo fica parado.
+      const voltarAoInicio = () => {
+        video.pause();
+        try {
+          video.currentTime = 0;
+        } catch {
+          /* ignora */
+        }
+      };
+      voltarAoInicio();
+      video.addEventListener('loadedmetadata', voltarAoInicio, { once: true });
     } else {
       play();
     }

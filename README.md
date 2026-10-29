@@ -63,7 +63,7 @@ junction em `.claude/skills/` — use `--copy` se a junction for bloqueada.
 
 ## Painel do admin (`#/admin`)
 
-- Entrada por PIN (padrão `1234`, alterável em Configurações).
+- Entrada por PIN (padrão `196532`, alterável em Configurações).
 - Tabela de aulas com título, módulo, ID do vídeo, contagem de arquivos e status
   (publicada / rascunho), com botões para subir/descer a ordem.
 - Modal de edição: título, link do YouTube (com prévia do thumbnail e ID detectado),
@@ -102,15 +102,25 @@ Responsivo: 6 colunas até 1079px, faixa vira uma coluna até 820px e 1 coluna a
 
 ## Fundo em vídeo
 
-- `public/fundo.mp4` é o fundo da plataforma: toca sozinho enquanto a página está
-  parada e, durante a rolagem, o playhead caminha junto com o scroll — a animação do
-  vídeo acompanha a posição da página (`motion.js`).
+- `public/fundo.mp4` é o fundo da plataforma e fica **sempre reproduzindo em loop**:
+  nem a rolagem nem o fim do trecho param o vídeo. A rolagem apenas puxa o
+  playhead para a posição da página e desloca o fundo no parallax (`motion.js`).
 - O quadro é reposicionado por parallax (`--fundo-y`, 3% da altura) e o vídeo fica
   um pouco ampliado (`scale(1.08)`) para não mostrar borda.
+- **Ordem de pintura:** o `body` é transparente e quem carrega a cor base da tela é
+  o `html`. As camadas do fundo têm `z-index` próprio (`.fundo` = 0, `.grain` = 1) e
+  o conteúdo (`main.app`) fica em `z-index: 2`. Com o `body` opaco, o vídeo pintava
+  atrás dele e não aparecia — foi a causa raiz do sumiço do fundo.
+- O véu de leitura (`.grain`) usa `--scrim-1/2/3` = `.20/.46/.68` (`.55/.75/.88` no
+  painel do admin): escuro o bastante para o texto ficar legível, claro o bastante
+  para o vídeo aparecer.
 - O `fundo.png` continua como `poster` e como fundo de recuo em CSS (navegador sem
   H.264, vídeo ainda carregando ou `prefers-reduced-motion`).
 - O playhead só avança para trechos já baixados; assim a rolagem não reinicia o
-  download do arquivo nem zera a imagem.
+  download do arquivo nem zera a imagem. Durante a rolagem ele é corrigido em
+  passos de 0,25 s **sem pausar** o vídeo; nos últimos 0,5 s do arquivo o vídeo
+  toca sozinho, porque manter o playhead colado ali reiniciaria a imagem a cada
+  volta do loop.
 - Com `prefers-reduced-motion: reduce` o fundo fica parado no primeiro quadro.
 
 ## Paleta
@@ -139,6 +149,11 @@ bundle `taste-skill` que proíbem gradiente, blur e cor de marca estão marcadas
   e o ID do vídeo direto.
 - Os arquivos do fundo são conferidos por sha256 (`npm run assets:hash`): o
   `public/fundo.mp4` e o `public/fundo.png` são byte a byte os arquivos anexados.
+- A verificação no navegador (`npm run browser-check`) confere a **visibilidade
+  real** do fundo, não só a existência do elemento: `elementFromPoint` precisa
+  devolver o próprio `<video>` (se algo opaco o cobrir, devolveria outra coisa), o
+  `body` precisa estar transparente e o quadro é desenhado num canvas para garantir
+  que a tela não fica preta.
 - O fundo, o brilho violeta e os vidros escuros vêm do vídeo `fundo.mp4` e da imagem
   `FUNDO.png`; por isso as regras que proíbem gradiente e blur do bundle `taste-skill`
   estão marcadas com `taste-skill-ignore` no `styles.css`, com o motivo de cada caso.

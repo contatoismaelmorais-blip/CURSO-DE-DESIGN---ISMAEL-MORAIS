@@ -204,6 +204,25 @@ try {
     await page.send('Page.reload');
     await sleep(1800);
 
+    // O fundo precisa estar de fato na tela: existir no DOM não basta.
+    // O teste pega o ponto que o mouse alcançaria e pergunta quem está
+    // pintado ali — se o body cobrir o vídeo, a resposta não é o vídeo.
+    const pintura = await page.eval(() => {
+      const v = document.querySelector('[data-fundo-video]');
+      const r = v.getBoundingClientRect();
+      const y = Math.round(window.innerHeight / 2);
+      const ponto = document.elementFromPoint(10, y);
+      return {
+        visivel: !!ponto && (ponto === v || v.contains(ponto)),
+        quem: ponto ? `${ponto.tagName.toLowerCase()}${ponto.className ? `.${ponto.className}` : ''}` : 'nada',
+        cobreTela: r.width >= window.innerWidth - 1 && r.height >= window.innerHeight - 1,
+        body: getComputedStyle(document.body).backgroundColor,
+      };
+    });
+    check('Vídeo de fundo visível na tela (não só no DOM)', pintura.visivel, `elementFromPoint → ${pintura.quem}`);
+    check('Vídeo de fundo cobre a tela inteira', pintura.cobreTela === true);
+    check('O body não cobre o fundo com cor opaca', pintura.body === 'rgba(0, 0, 0, 0)', pintura.body);
+
     // Toca sozinho quando a página está parada
     const parado = await page.eval(async () => {
       const v = document.querySelector('[data-fundo-video]');
@@ -213,6 +232,21 @@ try {
     });
     check('Vídeo toca sozinho com a página parada', parado.pausado === false && parado.t1 !== parado.t0, `t=${parado.t1.toFixed(2)}s`);
 
+    // O quadro é desenhado de verdade (uma tela preta não contaria como fundo)
+    const quadro = await page.eval(() => {
+      const v = document.querySelector('[data-fundo-video]');
+      const c = document.createElement('canvas');
+      c.width = 32;
+      c.height = 18;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(v, 0, 0, 32, 18);
+      const d = ctx.getImageData(0, 0, 32, 18).data;
+      let soma = 0;
+      for (let i = 0; i < d.length; i += 4) soma += (d[i] + d[i + 1] + d[i + 2]) / 3;
+      return soma / (d.length / 4);
+    });
+    check('O vídeo desenha o quadro na tela', quadro > 3, `luminância média ${quadro.toFixed(1)}`);
+
     // A animação acompanha a rolagem: o playhead caminha com a página
     const rolagem = await page.eval(async () => {
       const v = document.querySelector('[data-fundo-video]');
@@ -220,6 +254,9 @@ try {
       const espera = (ms) => new Promise((r) => setTimeout(r, ms));
       // O CSS usa scroll-behavior suave; o teste precisa de saltos imediatos.
       document.documentElement.style.scrollBehavior = 'auto';
+      let pausou = false;
+      // Deixa o arquivo começar a baixar antes de medir o playhead.
+      await espera(600);
 
       const irPara = async (y) => {
         window.scrollTo(0, y);
@@ -231,26 +268,34 @@ try {
         window.scrollTo(0, y + 1);
         await espera(40);
         window.scrollTo(0, y);
-        await espera(120);
+        await espera(160);
+        if (v.paused) pausou = true;
         return v.currentTime;
       };
 
-      const fim = await irPara(max);
-      const yFim = getComputedStyle(v).getPropertyValue('--fundo-y').trim();
-      const meio = await irPara(Math.round(max / 2));
       const inicio = await irPara(0);
-      return { max, fim, meio, inicio, duracao: v.duration, yFim };
+      const quarto = await irPara(Math.round(max * 0.25));
+      const meio = await irPara(Math.round(max / 2));
+      const tresQuartos = await irPara(Math.round(max * 0.75));
+      const yFim = getComputedStyle(v).getPropertyValue('--fundo-y').trim();
+      const fim = await irPara(max);
+      return { max, inicio, quarto, meio, tresQuartos, fim, duracao: v.duration, yFim, pausou, pausado: v.paused };
     });
 
     if (rolagem.max > 100) {
       check(
+        'O vídeo continua reproduzindo durante a rolagem',
+        rolagem.pausou === false && rolagem.pausado === false,
+        `pausado=${rolagem.pausado}`,
+      );
+      check(
         'Rolagem leva o playhead do vídeo junto',
-        rolagem.fim > rolagem.meio && rolagem.meio > rolagem.inicio,
-        `topo ${rolagem.inicio.toFixed(2)}s · meio ${rolagem.meio.toFixed(2)}s · fim ${rolagem.fim.toFixed(2)}s`,
+        rolagem.quarto > rolagem.inicio && rolagem.meio > rolagem.quarto && rolagem.tresQuartos > rolagem.meio,
+        `topo ${rolagem.inicio.toFixed(2)}s · 1/4 ${rolagem.quarto.toFixed(2)}s · meio ${rolagem.meio.toFixed(2)}s · 3/4 ${rolagem.tresQuartos.toFixed(2)}s`,
       );
       check(
         'Quadro do vídeo acompanha a posição da rolagem',
-        Math.abs(rolagem.meio - rolagem.duracao / 2) < 1.2 && rolagem.fim > rolagem.duracao * 0.8,
+        Math.abs(rolagem.meio - rolagem.duracao / 2) < 1.2 && Math.abs(rolagem.tresQuartos - rolagem.duracao * 0.75) < 1.2,
         `meio ${rolagem.meio.toFixed(2)}s de ${rolagem.duracao.toFixed(2)}s`,
       );
       check('Fundo desliza com a rolagem (parallax)', rolagem.yFim !== '' && rolagem.yFim !== '0px', rolagem.yFim);
@@ -345,7 +390,7 @@ try {
 
     await page.eval(() => {
       const i = document.querySelector('#pin');
-      i.value = '1234';
+      i.value = '196532';
       document.querySelector('#login-form').requestSubmit();
     });
     await sleep(700);
