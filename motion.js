@@ -4,12 +4,16 @@
  * nada. Ela apenas puxa o playhead para a posição da página (quando o trecho
  * já está baixado) e desloca o fundo no parallax. Parou de rolar, o vídeo
  * continua tocando de onde parou.
- * Com prefers-reduced-motion o quadro fica fixo (a capa da imagem). */
+ * Com prefers-reduced-motion o quadro fica fixo (a capa da imagem).
+ * Se o arquivo do vídeo não carregar (404, codec sem suporte), o elemento
+ * sai de cena e o PNG do fundo — que o CSS já coloca em .fundo — continua
+ * cobrindo a tela. */
 
 const IDLE_MS = 260; // ms sem rolagem para o vídeo voltar a tocar sozinho
 const CORRIGE = 0.25; // s: desvio do playhead que a rolagem corrige
 const ZONE_FIM = 0.5; // s: trecho final do vídeo em que ele toca sozinho (sem o loop reiniciar a imagem)
 const PARALLAX = 0.03; // fração da altura que o fundo percorre ao longo da página
+const CLASSE_ERRO = 'fundo-video--erro'; // marca o vídeo que não pôde ser carregado
 
 export function initFundoVideo() {
   const video = document.querySelector('[data-fundo-video]');
@@ -19,27 +23,73 @@ export function initFundoVideo() {
   let duration = 0;
   let lastScroll = -Infinity;
   let raf = 0;
+  let falhou = false;
+  let reduceAntes = reduce.matches;
+  let aoCarregar = null;
+  const limpezas = [];
+
+  // Todo listener registrado aqui é desfeito no stop(): nenhuma tela
+  // desmontada fica chamando o vídeo.
+  const on = (alvo, tipo, fn, opcoes) => {
+    alvo.addEventListener(tipo, fn, opcoes);
+    limpezas.push(() => alvo.removeEventListener(tipo, fn, opcoes));
+  };
 
   video.muted = true; // alguns navegadores só aceitam a propriedade
   video.setAttribute('muted', '');
   video.playsInline = true;
+  video.dataset.estado = 'parado';
 
   function readDuration() {
     duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
   }
-  video.addEventListener('loadedmetadata', readDuration);
-  video.addEventListener('durationchange', readDuration);
+  on(video, 'loadedmetadata', readDuration);
+  on(video, 'durationchange', readDuration);
   readDuration();
 
   function play() {
+    if (falhou) return;
     const p = video.play();
     if (p && typeof p.catch === 'function') p.catch(() => {});
   }
 
+  on(video, 'play', () => {
+    video.dataset.estado = 'tocando';
+  });
+  on(video, 'pause', () => {
+    if (!falhou) video.dataset.estado = 'parado';
+  });
+
+  // O arquivo não carregou ou não decodificou: o vídeo sai de cena e o PNG
+  // de fundo (definido no CSS de .fundo) fica no lugar dele.
+  function semVideo() {
+    if (falhou) return;
+    falhou = true;
+    video.dataset.estado = 'erro';
+    video.classList.add(CLASSE_ERRO);
+    video.removeAttribute('autoplay');
+    try {
+      video.pause();
+    } catch {
+      /* ignora */
+    }
+  }
+  on(video, 'error', semVideo);
+  const fonte = video.querySelector('source');
+  if (fonte) on(fonte, 'error', semVideo);
+
+  // O navegador interrompeu a reprodução esperando bytes: o playhead volta a
+  // andar assim que o trecho chega.
+  const retomar = () => {
+    if (!falhou && video.paused) play();
+  };
+  on(video, 'waiting', retomar);
+  on(video, 'stalled', retomar);
+
   function scrollProgress() {
     const doc = document.documentElement;
     const max = doc.scrollHeight - window.innerHeight;
-    if (max <= 8) return 0; // página sem rolagem: não há o que accompanyar
+    if (max <= 8) return 0; // página sem rolagem: não há o que acompanhar
     return Math.min(1, Math.max(0, window.scrollY / max));
   }
 
@@ -67,6 +117,14 @@ export function initFundoVideo() {
 
   function frame() {
     raf = requestAnimationFrame(frame);
+
+    // A preferência de movimento pode mudar sem evento (alguns navegadores
+    // headless): conferindo a cada quadro, o vídeo para ou continua junto.
+    if (reduce.matches !== reduceAntes) {
+      reduceAntes = reduce.matches;
+      applyMotionPreference();
+    }
+    if (falhou) return;
     if (reduce.matches) return;
 
     const p = scrollProgress();
@@ -93,40 +151,48 @@ export function initFundoVideo() {
     }
   }
 
-  window.addEventListener(
-    'scroll',
-    () => {
-      lastScroll = performance.now();
-    },
-    { passive: true }
-  );
+  function marcarScroll() {
+    lastScroll = performance.now();
+  }
+  on(window, 'scroll', marcarScroll, { passive: true });
 
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) video.pause();
-    else if (!reduce.matches) play();
-  });
+  function aoMudarAba() {
+    if (document.hidden) {
+      video.pause();
+    } else if (!reduce.matches) {
+      play();
+    }
+  }
+  on(document, 'visibilitychange', aoMudarAba);
+
+  function fixarNoInicio() {
+    try {
+      video.pause();
+      video.currentTime = 0;
+    } catch {
+      /* ignora */
+    }
+  }
 
   function applyMotionPreference() {
     if (reduce.matches) {
-      video.pause();
       video.removeAttribute('autoplay');
       // O atributo autoplay pode ter iniciado a reprodução antes do script:
       // o quadro volta ao primeiro e o vídeo fica parado.
-      const voltarAoInicio = () => {
-        video.pause();
-        try {
-          video.currentTime = 0;
-        } catch {
-          /* ignora */
-        }
-      };
-      voltarAoInicio();
-      video.addEventListener('loadedmetadata', voltarAoInicio, { once: true });
+      fixarNoInicio();
+      if (aoCarregar) video.removeEventListener('loadedmetadata', aoCarregar);
+      aoCarregar = fixarNoInicio;
+      const fn = aoCarregar;
+      video.addEventListener('loadedmetadata', fn, { once: true });
+      limpezas.push(() => video.removeEventListener('loadedmetadata', fn));
     } else {
       play();
     }
   }
-  if (typeof reduce.addEventListener === 'function') reduce.addEventListener('change', applyMotionPreference);
+  if (typeof reduce.addEventListener === 'function') {
+    reduce.addEventListener('change', applyMotionPreference);
+    limpezas.push(() => reduce.removeEventListener('change', applyMotionPreference));
+  }
   applyMotionPreference();
 
   raf = requestAnimationFrame(frame);
@@ -136,6 +202,8 @@ export function initFundoVideo() {
     video,
     stop() {
       cancelAnimationFrame(raf);
+      raf = 0;
+      while (limpezas.length) limpezas.pop()();
     },
   };
 }

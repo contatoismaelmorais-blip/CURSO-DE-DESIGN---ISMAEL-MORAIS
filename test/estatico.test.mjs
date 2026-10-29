@@ -13,6 +13,7 @@ const motion = await readFile(new URL('../motion.js', import.meta.url), 'utf8');
 const youtube = await readFile(new URL('../youtube.js', import.meta.url), 'utf8');
 const pacote = await readFile(new URL('../package.json', import.meta.url), 'utf8');
 const instalador = await readFile(new URL('../tools/install-taste.mjs', import.meta.url), 'utf8');
+const navegador = await readFile(new URL('../tools/browser-check.mjs', import.meta.url), 'utf8');
 const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
 
 // index.html precisa dos hooks usados pelo app
@@ -34,6 +35,18 @@ assert.ok(html.includes('playsinline') && html.includes('muted'), 'o vídeo do f
 assert.ok(motion.includes('scroll') && motion.includes('currentTime'), 'motion.js não liga a animação do vídeo à rolagem');
 assert.ok(motion.includes('prefers-reduced-motion'), 'motion.js sem fallback para movimento reduzido');
 assert.ok(motion.includes('buffered'), 'motion.js deve limitar o playhead ao que já está em buffer');
+// recuo: se o vídeo não carregar, o PNG do fundo fica no lugar dele
+assert.ok(motion.includes('fundo-video--erro'), 'motion.js sem recuo para o vídeo que falha');
+assert.ok(motion.includes("'error'"), 'motion.js não escuta o erro de mídia do vídeo');
+assert.ok(css.includes('.fundo-video--erro'), 'styles.css sem a regra que esconde o vídeo com erro');
+assert.ok(motion.includes('stop()') && motion.includes('removeEventListener'), 'motion.js sem limpeza de listeners');
+
+// os assets do fundo são servidos pela pasta public (raiz do site)
+assert.ok(html.includes('poster="/fundo.png"'), 'index.html sem a capa /fundo.png no vídeo');
+assert.ok(html.includes('src="/fundo.mp4"'), 'index.html sem a fonte /fundo.mp4');
+assert.ok(navegador.includes("'.mp4': 'video/mp4'"), 'o servidor de verificação não serve .mp4 como video/mp4');
+assert.ok(navegador.includes("'.png': 'image/png'"), 'o servidor de verificação não serve .png como image/png');
+assert.ok(navegador.includes('accept-ranges'), 'o servidor de verificação não aceita pedidos por trecho');
 
 // funcionalidades pedidas
 assert.ok(js.includes('data-tab="arquivos"'), 'app.js sem a aba de arquivos');

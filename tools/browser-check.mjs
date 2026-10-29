@@ -13,6 +13,9 @@ const PROJECT = resolve('.');
 // O build do Vite é o que o navegador recebe de verdade: importa o JSON do
 // projeto como módulo e resolve os assets com hash.
 const ROOT = existsSync(join(PROJECT, 'dist', 'index.html')) ? join(PROJECT, 'dist') : PROJECT;
+// A pasta public do Vite é servida na raiz do site: /fundo.mp4 e /fundo.png
+// precisam responder mesmo quando o teste roda sem o build.
+const PUBLIC = join(PROJECT, 'public');
 const OUT = join(PROJECT, '.taste-skill', 'shots');
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -32,7 +35,13 @@ const server = createServer((req, res) => {
   try {
     const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
     let file = join(ROOT, path === '/' ? 'index.html' : path);
-    if (!file.startsWith(ROOT) || !existsSync(file) || statSync(file).isDirectory()) file = join(ROOT, 'index.html');
+    if (!file.startsWith(ROOT) || !existsSync(file) || statSync(file).isDirectory()) {
+      const publico = join(PUBLIC, path);
+      file =
+        publico.startsWith(PUBLIC) && existsSync(publico) && statSync(publico).isFile()
+          ? publico
+          : join(ROOT, 'index.html');
+    }
     const stat = statSync(file);
     const type = MIME[extname(file).toLowerCase()] || 'application/octet-stream';
     // O player precisa de respostas parciais para conseguir avançar no vídeo.
@@ -156,6 +165,35 @@ try {
     await page.screenshot({ path: join(OUT, 'home.jpg'), quality: 80 });
     await page.close();
   });
+  /* ------------------------------------------------- assets do fundo */
+  await step('assets do fundo servidos', async () => {
+    // Os dois arquivos precisam responder de verdade, com o tipo certo:
+    // sem isso o navegador baixa o vídeo como texto e o fundo não abre.
+    const mp4 = await fetch(`${base}fundo.mp4`);
+    check(
+      'O vídeo do fundo é servido como video/mp4',
+      mp4.status === 200 && mp4.headers.get('content-type') === 'video/mp4',
+      `${mp4.status} ${mp4.headers.get('content-type')}`,
+    );
+    check(
+      'O servidor aceita pedido de trecho do vídeo (range)',
+      mp4.headers.get('accept-ranges') === 'bytes',
+      mp4.headers.get('accept-ranges') || 'sem accept-ranges',
+    );
+    const parcial = await fetch(`${base}fundo.mp4`, { headers: { Range: 'bytes=0-1023' } });
+    check(
+      'O navegador consegue baixar só um pedaço do vídeo',
+      parcial.status === 206 && (parcial.headers.get('content-range') || '').startsWith('bytes 0-1023/'),
+      `${parcial.status} ${parcial.headers.get('content-range') || ''}`,
+    );
+    const png = await fetch(`${base}fundo.png`);
+    check(
+      'A imagem de fundo é servida como image/png',
+      png.status === 200 && png.headers.get('content-type') === 'image/png',
+      `${png.status} ${png.headers.get('content-type')}`,
+    );
+  });
+
   /* -------------------------------------------------- fundo em vídeo */
   await step('fundo em vídeo', async () => {
     const page = await browser.newPage({ width: 1440, height: 900 });
@@ -247,6 +285,135 @@ try {
     });
     check('O vídeo desenha o quadro na tela', quadro > 3, `luminância média ${quadro.toFixed(1)}`);
 
+    // A capa do vídeo (poster) precisa carregar de verdade: é ela que
+    // aparece enquanto o arquivo não chega e o que fica no lugar se o vídeo
+    // falhar.
+    const capa = await page.eval(async () => {
+      const v = document.querySelector('[data-fundo-video]');
+      const r = await fetch(v.poster);
+      const img = new Image();
+      img.src = v.poster;
+      const carregou = await new Promise((res) => {
+        img.onload = () => res(true);
+        img.onerror = () => res(false);
+        setTimeout(() => res(false), 3000);
+      });
+      return {
+        status: r.status,
+        tipo: r.headers.get('content-type'),
+        carregou,
+        largura: img.naturalWidth,
+        altura: img.naturalHeight,
+        erro: v.error ? v.error.code : 0,
+      };
+    });
+    check(
+      'A capa do vídeo (poster) carrega de verdade',
+      capa.status === 200 && capa.tipo === 'image/png' && capa.carregou && capa.largura > 0,
+      `${capa.largura}x${capa.altura} · ${capa.tipo}`,
+    );
+    check('O vídeo do fundo não acusa erro de mídia', capa.erro === 0, `código ${capa.erro}`);
+
+    // Ida e volta da preferência de movimento, sem recarregar a página: o
+    // quadro precisa parar no "reduce" e a reprodução voltar no "no-preference".
+    await page.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
+    });
+    await sleep(600);
+    const parou = await page.eval(() => {
+      const v = document.querySelector('[data-fundo-video]');
+      return { pausado: v.paused, tempo: v.currentTime, estado: v.dataset.estado };
+    });
+    check(
+      'Movimento reduzido em tempo real: o quadro para',
+      parou.pausado === true,
+      `pausado=${parou.pausado} t=${parou.tempo.toFixed(2)}s estado=${parou.estado}`,
+    );
+
+    await page.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }],
+    });
+    await sleep(600);
+    const voltou = await page.eval(async () => {
+      const v = document.querySelector('[data-fundo-video]');
+      const t0 = v.currentTime;
+      await new Promise((r) => setTimeout(r, 600));
+      return { pausado: v.paused, t0, t1: v.currentTime, estado: v.dataset.estado };
+    });
+    check(
+      'Movimento normal em tempo real: a reprodução volta sozinha',
+      voltou.pausado === false && voltou.t1 > voltou.t0,
+      `pausado=${voltou.pausado} t=${voltou.t0.toFixed(2)}s → ${voltou.t1.toFixed(2)}s`,
+    );
+
+    // O loop fecha de verdade: o playhead dá a volta no arquivo, sem travar
+    // e sem pausar nenhuma vez.
+    const loop = await page.eval(async () => {
+      const v = document.querySelector('[data-fundo-video]');
+      const eventos = { waiting: 0, stalled: 0, playing: 0, ended: 0, error: 0 };
+      for (const nome of Object.keys(eventos)) {
+        v.addEventListener(nome, () => {
+          eventos[nome] += 1;
+        });
+      }
+      // Deixa qualquer correção de rolagem pendente assentar antes de medir.
+      window.scrollTo(0, 0);
+      await new Promise((r) => setTimeout(r, 500));
+      const duracao = v.duration || 0;
+      const janela = duracao * 1000 + 1500; // passa da duração para pegar a volta
+      const inicio = performance.now();
+      let pausado = false;
+      let parouPor = 0; // ms sem o playhead andar
+      let ultimoTempo = v.currentTime;
+      let ultimoAvanco = inicio;
+      const voltas = [];
+      while (performance.now() - inicio < janela) {
+        await new Promise((r) => setTimeout(r, 50));
+        const agora = performance.now();
+        const t = v.currentTime;
+        if (v.paused) pausado = true;
+        if (t < ultimoTempo - 0.05) {
+          voltas.push({ de: ultimoTempo, para: t, em: Math.round(agora - inicio) });
+        }
+        if (Math.abs(t - ultimoTempo) > 0.001) {
+          parouPor = Math.max(parouPor, agora - ultimoAvanco);
+          ultimoAvanco = agora;
+        }
+        ultimoTempo = t;
+      }
+      return {
+        duracao,
+        medido: Math.round(performance.now() - inicio),
+        pausado,
+        parouPor: Math.round(parouPor),
+        voltas,
+        eventos,
+      };
+    });
+    const volta = loop.voltas.find((x) => x.de > loop.duracao - 0.8 && x.para < 0.8);
+    check(
+      'O vídeo fica tocando o tempo todo (nenhuma pausa no meio)',
+      loop.pausado === false,
+      `pausado=${loop.pausado}`,
+    );
+    check(
+      'O loop fecha: o playhead dá a volta no arquivo',
+      !!volta,
+      volta
+        ? `${volta.de.toFixed(2)}s → ${volta.para.toFixed(2)}s em ${volta.em}ms`
+        : `nenhuma volta em ${loop.medido}ms`,
+    );
+    check(
+      'O vídeo não trava durante o loop',
+      loop.parouPor <= 300,
+      `parado por até ${loop.parouPor}ms · waiting=${loop.eventos.waiting} stalled=${loop.eventos.stalled}`,
+    );
+    check(
+      'O vídeo não dá erro nem encerra sozinho',
+      loop.eventos.error === 0 && loop.eventos.ended === 0,
+      `error=${loop.eventos.error} ended=${loop.eventos.ended} playing=${loop.eventos.playing}`,
+    );
+
     // A animação acompanha a rolagem: o playhead caminha com a página
     const rolagem = await page.eval(async () => {
       const v = document.querySelector('[data-fundo-video]');
@@ -305,6 +472,83 @@ try {
 
     await page.screenshot({ path: join(OUT, 'fundo-video.jpg'), quality: 80 });
     check('Sem erros de console com o vídeo', page.consoleErrors.length === 0, page.consoleErrors[0] || '');
+    await page.close();
+  });
+
+  /* --------------------------------------- fundo em vídeo (celular) */
+  await step('fundo em vídeo no celular', async () => {
+    const page = await browser.newPage({ width: 390, height: 844, mobile: true });
+    await page.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }],
+    });
+    await page.goto(`${base}#/`, { timeoutMs: 20000, settleMs: 1800 });
+    const movel = await page.eval(() => {
+      const v = document.querySelector('[data-fundo-video]');
+      const r = v.getBoundingClientRect();
+      // No celular o conteúdo ocupa a largura toda: para perguntar quem está
+      // pintado no fundo, o conteúdo sai de cena por um instante.
+      const conteudo = document.querySelector('main.app');
+      const antes = conteudo ? conteudo.style.visibility : '';
+      if (conteudo) conteudo.style.visibility = 'hidden';
+      const ponto = document.elementFromPoint(10, Math.round(window.innerHeight / 2));
+      if (conteudo) conteudo.style.visibility = antes;
+
+      const c = document.createElement('canvas');
+      c.width = 24;
+      c.height = 40;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(v, 0, 0, 24, 40);
+      const d = ctx.getImageData(0, 0, 24, 40).data;
+      let soma = 0;
+      for (let i = 0; i < d.length; i += 4) soma += (d[i] + d[i + 1] + d[i + 2]) / 3;
+
+      return {
+        visivel: !!ponto && (ponto === v || v.contains(ponto)),
+        quem: ponto ? `${ponto.tagName.toLowerCase()}${ponto.className ? `.${ponto.className}` : ''}` : 'nada',
+        cobre: r.width >= window.innerWidth - 1 && r.height >= window.innerHeight - 1,
+        body: getComputedStyle(document.body).backgroundColor,
+        pausado: v.paused,
+        erro: v.error ? v.error.code : 0,
+        luminancia: soma / (d.length / 4),
+      };
+    });
+    check('Fundo em vídeo visível no celular', movel.visivel === true, `elementFromPoint → ${movel.quem}`);
+    check('Fundo em vídeo cobre a tela do celular', movel.cobre === true);
+    check('O body não cobre o fundo no celular', movel.body === 'rgba(0, 0, 0, 0)', movel.body);
+    check('O vídeo toca no celular', movel.pausado === false, `pausado=${movel.pausado}`);
+    check('O quadro do vídeo é desenhado no celular', movel.luminancia > 3, `luminância média ${movel.luminancia.toFixed(1)}`);
+    check('O vídeo não acusa erro no celular', movel.erro === 0, `código ${movel.erro}`);
+    check('Sem erros de console no celular', page.consoleErrors.length === 0, page.consoleErrors[0] || '');
+    await page.screenshot({ path: join(OUT, 'fundo-video-mobile.jpg'), quality: 80 });
+    await page.close();
+  });
+
+  /* ------------------------------------------ recuo quando o vídeo falha */
+  await step('recuo quando o vídeo falha', async () => {
+    const page = await browser.newPage({ width: 1440, height: 900 });
+    await page.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }],
+    });
+    await page.goto(`${base}#/`, { timeoutMs: 20000, settleMs: 1500 });
+    const recuo = await page.eval(async () => {
+      const v = document.querySelector('[data-fundo-video]');
+      const fundo = document.querySelector('.fundo');
+      // Reproduz o que o navegador dispara quando o arquivo não carrega.
+      v.dispatchEvent(new Event('error'));
+      await new Promise((r) => setTimeout(r, 300));
+      const r = fundo.getBoundingClientRect();
+      return {
+        escondido: getComputedStyle(v).display === 'none',
+        classe: v.classList.contains('fundo-video--erro'),
+        estado: v.dataset.estado,
+        pausado: v.paused,
+        png: getComputedStyle(fundo).backgroundImage.includes('fundo.png'),
+        cobre: r.width >= window.innerWidth - 1 && r.height >= window.innerHeight - 1,
+      };
+    });
+    check('Vídeo que falha sai de cena', recuo.escondido === true && recuo.classe === true, `estado=${recuo.estado}`);
+    check('Vídeo que falha para de tocar', recuo.pausado === true);
+    check('O PNG do fundo continua cobrindo a tela', recuo.png === true && recuo.cobre === true);
     await page.close();
   });
 
@@ -523,5 +767,5 @@ try {
 const falhas = results.filter((r) => !r.ok);
 console.log('');
 console.log(`RESULTADO: ${results.length - falhas.length}/${results.length} verificações passaram.`);
-console.log(`Prints: .taste-skill/shots (home.jpg, fundo-video.jpg, aula.jpg, admin.jpg)`);
+console.log(`Prints: .taste-skill/shots (home.jpg, fundo-video.jpg, fundo-video-mobile.jpg, aula.jpg, admin.jpg)`);
 process.exit(falhas.length ? 1 : 0);

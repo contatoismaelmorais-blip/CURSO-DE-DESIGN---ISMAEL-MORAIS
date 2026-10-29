@@ -51,7 +51,7 @@ junction em `.claude/skills/` — use `--copy` se a junction for bloqueada.
 | `tools/video-codec.mjs` | Leitor do cabeçalho do MP4 (codec, duração, resolução) |
 | `tools/assets-hash.mjs` | sha256/tamanho dos assets do fundo (compara com o anexo enviado) |
 | `tools/install-taste.mjs` | Instalador da skill do taste-skill em `.claude/skills` (versão sem bash) |
-| `tools/browser-check.mjs` | Verificação ponta a ponta no navegador (render, bento, vídeo de fundo, upload, persistência, importação, mobile) |
+| `tools/browser-check.mjs` | Verificação ponta a ponta no navegador (render, bento, assets servidos, vídeo de fundo no desktop e no celular, loop, movimento reduzido, upload, persistência, importação) |
 
 ## Fluxo do aluno
 
@@ -149,11 +149,22 @@ bundle `taste-skill` que proíbem gradiente, blur e cor de marca estão marcadas
   e o ID do vídeo direto.
 - Os arquivos do fundo são conferidos por sha256 (`npm run assets:hash`): o
   `public/fundo.mp4` e o `public/fundo.png` são byte a byte os arquivos anexados.
-- A verificação no navegador (`npm run browser-check`) confere a **visibilidade
-  real** do fundo, não só a existência do elemento: `elementFromPoint` precisa
-  devolver o próprio `<video>` (se algo opaco o cobrir, devolveria outra coisa), o
-  `body` precisa estar transparente e o quadro é desenhado num canvas para garantir
-  que a tela não fica preta.
+- A verificação no navegador (`npm run browser-check`, 78 checagens) confere a
+  **visibilidade real** do fundo, não só a existência do elemento: `elementFromPoint`
+  precisa devolver o próprio `<video>` (se algo opaco o cobrir, devolveria outra
+  coisa), o `body` precisa estar transparente e o quadro é desenhado num canvas para
+  garantir que a tela não fica preta. Além disso ela confere que:
+  - os dois arquivos são **servidos de verdade** (`200` + `content-type` `video/mp4` e
+    `image/png`, pedido por trecho respondendo `206`) e que a capa (`poster`) carrega;
+  - o **loop fecha**: o playhead dá a volta no arquivo (5,97 s → 0 s) sem pausar nenhuma
+    vez e sem travar mais de 300 ms (`waiting`/`stalled`/`playing`/`ended`/`error`
+    monitorados durante uma janela maior que a duração);
+  - o **movimento reduzido** funciona nos dois sentidos: ao virar `reduce` o quadro
+    para e, ao voltar para `no-preference`, a reprodução retoma sozinha;
+  - o mesmo fundo aparece no **celular** (390×844): visível, cobrindo a tela e tocando.
+- Se o arquivo do vídeo não carregar (404, codec sem suporte), `motion.js` esconde o
+  elemento e o PNG do fundo — que o CSS já coloca em `.fundo` — continua cobrindo a
+  tela; os listeners são desfeitos no `stop()`.
 - O fundo, o brilho violeta e os vidros escuros vêm do vídeo `fundo.mp4` e da imagem
   `FUNDO.png`; por isso as regras que proíbem gradiente e blur do bundle `taste-skill`
   estão marcadas com `taste-skill-ignore` no `styles.css`, com o motivo de cada caso.
