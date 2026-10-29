@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Curso de Design — Plataforma de aulas</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="fundo" aria-hidden="true"></div>
+  <div class="grain" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <a class="brand" href="#/">
+      <span class="brand-mark" aria-hidden="true">◐</span>
+      <span class="brand-text">
+        <strong data-brand>Curso de Design</strong>
+        <small data-tagline>Plataforma de aulas</small>
+      </span>
+    </a>
+    <nav class="nav">
+      <a href="#/" data-nav="aluno">Aluno</a>
+      <a href="#/admin" data-nav="admin">Admin</a>
+    </nav>
+  </header>
+
+  <main id="app" class="app"></main>
+
+  <div id="modal-root"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
