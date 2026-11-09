@@ -121,7 +121,7 @@ Responsivo: 6 colunas até 1079px, faixa vira uma coluna até 820px e 1 coluna a
   passos de 0,25 s **sem pausar** o vídeo; nos últimos 0,5 s do arquivo o vídeo
   toca sozinho, porque manter o playhead colado ali reiniciaria a imagem a cada
   volta do loop.
-- Com `prefers-reduced-motion: reduce` o fundo fica parado no primeiro quadro.
+- Com `prefers-reduced-motion: reduce` o parallax do fundo é desligado, mas o vídeo continua tocando em loop.
 
 ## Paleta
 

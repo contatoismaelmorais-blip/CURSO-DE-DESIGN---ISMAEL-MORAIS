@@ -1,17 +1,14 @@
 /* motion.js — fundo animado ligado à rolagem.
  *
- * O vídeo de fundo fica tocando em loop o tempo todo: a rolagem não pausa
- * nada. Ela apenas puxa o playhead para a posição da página (quando o trecho
- * já está baixado) e desloca o fundo no parallax. Parou de rolar, o vídeo
- * continua tocando de onde parou.
- * Com prefers-reduced-motion o quadro fica fixo (a capa da imagem).
+ * O vídeo de fundo fica tocando em loop o tempo todo: nem a rolagem nem a
+ * preferência de movimento reduzido param a reprodução. A rolagem apenas
+ * desloca o fundo no parallax. Parou de rolar, o vídeo continua tocando de
+ * onde parou e reinicia sozinho no fim do arquivo.
  * Se o arquivo do vídeo não carregar (404, codec sem suporte), o elemento
  * sai de cena e o PNG do fundo — que o CSS já coloca em .fundo — continua
  * cobrindo a tela. */
 
 const IDLE_MS = 260; // ms sem rolagem para o vídeo voltar a tocar sozinho
-const CORRIGE = 0.25; // s: desvio do playhead que a rolagem corrige
-const ZONE_FIM = 0.5; // s: trecho final do vídeo em que ele toca sozinho (sem o loop reiniciar a imagem)
 const PARALLAX = 0.03; // fração da altura que o fundo percorre ao longo da página
 const CLASSE_ERRO = 'fundo-video--erro'; // marca o vídeo que não pôde ser carregado
 
@@ -49,9 +46,16 @@ export function initFundoVideo() {
 
   function play() {
     if (falhou) return;
+    // O atributo `loop` garante o reinício; alguns navegadores recusam iniciar
+    // antes do metadata, por isso a tentativa é repetida no canplay.
+    if (!video.hasAttribute('loop')) video.setAttribute('loop', '');
     const p = video.play();
     if (p && typeof p.catch === 'function') p.catch(() => {});
   }
+
+  on(video, 'canplay', play);
+  on(video, 'loadeddata', play);
+  on(video, 'ended', play);
 
   on(video, 'play', () => {
     video.dataset.estado = 'tocando';
@@ -119,36 +123,27 @@ export function initFundoVideo() {
     raf = requestAnimationFrame(frame);
 
     // A preferência de movimento pode mudar sem evento (alguns navegadores
-    // headless): conferindo a cada quadro, o vídeo para ou continua junto.
+    // headless): conferindo a cada quadro, o parallax liga ou desliga.
     if (reduce.matches !== reduceAntes) {
       reduceAntes = reduce.matches;
       applyMotionPreference();
     }
     if (falhou) return;
-    if (reduce.matches) return;
 
     const p = scrollProgress();
     const rolando = performance.now() - lastScroll < IDLE_MS;
     const altura = video.clientHeight || window.innerHeight;
 
-    // O fundo desliza devagar junto com a rolagem.
-    video.style.setProperty('--fundo-y', `${(-PARALLAX * altura * p).toFixed(1)}px`);
+    // O fundo desliza devagar junto da rolagem.
+    if (!reduce.matches) {
+      video.style.setProperty('--fundo-y', `${(-PARALLAX * altura * p).toFixed(1)}px`);
+    } else {
+      video.style.setProperty('--fundo-y', '0px');
+    }
 
     // O vídeo fica tocando sempre: nem a rolagem nem o fim do trecho o param.
+    // O atributo `loop` do <video> reinicia a reprodução sozinho.
     if (video.paused) play();
-
-    if (!duration || !rolando) return; // parado, o vídeo toca sozinho em loop
-
-    // Durante a rolagem o playhead é puxado para a posição da página. A
-    // correção acontece sem pausar, para a animação continuar rodando.
-    const alvo = p * duration;
-    // No fim do arquivo não há trecho à frente: manter o playhead colado
-    // ali reiniciaria a imagem a cada volta do loop. Nessa zona o vídeo
-    // simplesmente continua tocando.
-    if (alvo > duration - ZONE_FIM) return;
-    if (Math.abs(video.currentTime - alvo) > CORRIGE && bufferedAt(alvo)) {
-      seekTo(alvo);
-    }
   }
 
   function marcarScroll() {
@@ -165,29 +160,10 @@ export function initFundoVideo() {
   }
   on(document, 'visibilitychange', aoMudarAba);
 
-  function fixarNoInicio() {
-    try {
-      video.pause();
-      video.currentTime = 0;
-    } catch {
-      /* ignora */
-    }
-  }
-
   function applyMotionPreference() {
-    if (reduce.matches) {
-      video.removeAttribute('autoplay');
-      // O atributo autoplay pode ter iniciado a reprodução antes do script:
-      // o quadro volta ao primeiro e o vídeo fica parado.
-      fixarNoInicio();
-      if (aoCarregar) video.removeEventListener('loadedmetadata', aoCarregar);
-      aoCarregar = fixarNoInicio;
-      const fn = aoCarregar;
-      video.addEventListener('loadedmetadata', fn, { once: true });
-      limpezas.push(() => video.removeEventListener('loadedmetadata', fn));
-    } else {
-      play();
-    }
+    // O vídeo de fundo é decorativo e sempre toca em loop; a preferência de
+    // movimento reduzido só desliga o parallax (e o tremor da rolagem).
+    play();
   }
   if (typeof reduce.addEventListener === 'function') {
     reduce.addEventListener('change', applyMotionPreference);
