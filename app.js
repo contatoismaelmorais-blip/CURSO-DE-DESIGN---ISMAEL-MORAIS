@@ -6,7 +6,8 @@ import {
   youtubeEmbed,
   isAdmin,
 } from './store.js';
-import { listFiles, saveFile, downloadFile, deleteFile } from './db.js';
+import { listFiles, saveFile, downloadFile, trashFile } from './db.js';
+import { enviarParaLixeira } from './lixeira.js';
 import { renderAdminPage } from './admin.js';
 import { esc, formatSize, formatDate, extIcon } from './util.js';
 import { initFundoVideo } from './motion.js';
@@ -287,8 +288,9 @@ async function refreshFiles(aulaId) {
   });
   container.querySelectorAll('[data-remove]').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      await deleteFile(btn.dataset.remove);
-      toast('Arquivo excluído.');
+      await trashFile(btn.dataset.remove);
+      enviarParaLixeira({ tipo: 'arquivo', titulo: 'Arquivo da aula', meta: '', dados: { id: btn.dataset.remove } });
+      toast('Arquivo movido para a lixeira (24h).');
       refreshFiles(aulaId);
     });
   });

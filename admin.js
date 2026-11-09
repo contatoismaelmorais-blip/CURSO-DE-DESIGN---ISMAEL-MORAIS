@@ -12,7 +12,8 @@ import {
   setAdmin,
   uid,
 } from './store.js';
-import { listFiles, saveFile, deleteFile, downloadFile } from './db.js';
+import { listFiles, saveFile, trashFile, restoreFile, deleteFile, downloadFile, purgeExpiredFiles } from './db.js';
+import { enviarParaLixeira, getLixeira, limparLixeira, removerDaLixeira, esvaziarLixeira, formatarRestante } from './lixeira.js';
 import { buscarVideosDoCanal, parseUrlList } from './youtube.js';
 import { esc, formatSize, formatDate } from './util.js';
 import content from './content.json';
@@ -58,6 +59,7 @@ function renderLogin(root) {
 /* -------------------------------------------------------------- admin page */
 export function renderAdminPage(root) {
   if (!isAdmin()) return renderLogin(root);
+  purgeExpiredFiles(); // apaga da lixeira o que passou de 24h
   const aulas = getAulas();
   const modulos = getModulos().sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0));
 
@@ -119,6 +121,12 @@ export function renderAdminPage(root) {
     </section>
 
     <section class="panel">
+      <h2>Lixeira <span class="muted small">(backup por 24h)</span></h2>
+      <p class="muted">Tudo que você excluir fica aqui por 24 horas antes de sumir de vez. Você pode restaurar qualquer item dentro do prazo.</p>
+      ${renderLixeiraHtml()}
+    </section>
+
+    <section class="panel">
       <h2>Importar aulas do canal do YouTube</h2>
       <p class="muted">Cole o link do canal (youtube.com/@canal), o link do feed RSS ou a lista de links das aulas. Cada vídeo vira uma aula no módulo escolhido; os materiais continuam sendo enviados pela aba Arquivos.</p>
       <form class="card-form" id="import-form">
@@ -175,6 +183,83 @@ export function renderAdminPage(root) {
   bindAdmin(root);
 }
 
+/** Lista a lixeira com restante de 24h, restaurar e descartar agora. */
+function renderLixeiraHtml() {
+  limparLixeira();
+  const itens = getLixeira();
+  if (!itens.length) {
+    return '<p class="muted small">A lixeira está vazia.</p>';
+  }
+  const tipoLabel = { aula: 'Aula', modulo: 'Módulo', arquivo: 'Arquivo' };
+  return `<ul class="module-list">
+    ${itens
+      .map(
+        (it) => `
+      <li>
+        <span class="mod-nome">${esc(it.titulo)}</span>
+        <span class="muted small">${esc(tipoLabel[it.tipo] || it.tipo)}${it.meta ? ` · ${esc(it.meta)}` : ''} · ${esc(formatarRestante(it.expiraEm))}</span>
+        <span class="row-actions">
+          <button class="btn btn--small" data-lix-restaurar="${esc(it.lixeiraId)}">Restaurar</button>
+          <button class="btn btn--small btn--danger" data-lix-apagar="${esc(it.lixeiraId)}">Excluir agora</button>
+        </span>
+      </li>`,
+      )
+      .join('')}
+  </ul>
+  <div class="admin-actions admin-actions--row">
+    <button class="btn btn--danger" id="lix-esvaziar">Esvaziar lixeira</button>
+  </div>`;
+}
+
+async function restaurarItem(lixeiraId, root) {
+  const item = getLixeira().find((it) => it.lixeiraId === lixeiraId);
+  if (!item) return;
+  if (item.tipo === 'arquivo' && item.dados?.id) {
+    await restoreFile(item.dados.id);
+    removerDaLixeira(lixeiraId);
+    toast('Arquivo restaurado.');
+    renderAdminPage(root);
+    return;
+  }
+  if (item.tipo === 'aula' && item.dados) {
+    upsertAula(item.dados);
+    toast('Aula restaurada.');
+  } else if (item.tipo === 'modulo' && item.dados) {
+    const list = getModulos();
+    if (!list.some((m) => m.id === item.dados.id)) {
+      list.push(item.dados);
+      saveModulos(list);
+      toast('Módulo restaurado.');
+    } else {
+      toast('Já existe um módulo com este ID.', 'warn');
+    }
+  } else {
+    toast('Restauração não disponível para este item.', 'warn');
+    return;
+  }
+  removerDaLixeira(lixeiraId);
+  renderAdminPage(root);
+}
+
+function bindLixeira(root) {
+  root.querySelectorAll('[data-lix-restaurar]').forEach((b) =>
+    b.addEventListener('click', () => restaurarItem(b.dataset.lixRestaurar, root)),
+  );
+  root.querySelectorAll('[data-lix-apagar]').forEach((b) =>
+    b.addEventListener('click', () => {
+      removerDaLixeira(b.dataset.lixApagar);
+      toast('Item excluído em definitivo.');
+      renderAdminPage(root);
+    }),
+  );
+  root.querySelector('#lix-esvaziar')?.addEventListener('click', () => {
+    if (!confirm('Esvaziar a lixeira? Os itens serão excluídos em definitivo.')) return;
+    esvaziarLixeira();
+    toast('Lixeira esvaziada.');
+    renderAdminPage(root);
+  });
+}
+
 function adminRow(a, modulos) {
   const mod = modulos.find((m) => m.id === a.moduloId);
   const id = esc(a.youtubeId || '');
@@ -199,6 +284,7 @@ function adminRow(a, modulos) {
 }
 
 function bindAdmin(root) {
+  bindLixeira(root);
   root.querySelector('#nova-aula')?.addEventListener('click', () => openAulaModal(root, null));
   root.querySelector('#primeira-aula')?.addEventListener('click', () => openAulaModal(root, null));
   root.querySelector('#novo-modulo')?.addEventListener('click', () => openModuloModal(root, null));
@@ -291,9 +377,10 @@ function bindAdmin(root) {
     if (!aula) return;
     if (confirm(`Excluir a aula "${aula.titulo}"? Os arquivos dela também serão removidos.`)) {
       const vinculados = await listFiles(aula.id);
-      for (const f of vinculados) await deleteFile(f.id);
+      for (const f of vinculados) await trashFile(f.id);
       deleteAula(aula.id);
-      toast('Aula excluída.');
+      enviarParaLixeira({ tipo: 'aula', titulo: aula.titulo, meta: aula.descricao || '', dados: aula });
+      toast('Aula movida para a lixeira (24h para restaurar).');
       renderAdminPage(root);
     }
   }));
@@ -307,7 +394,8 @@ function bindAdmin(root) {
     const fallback = todos.find((m) => m.id !== mod.id);
     saveAulas(getAulas().map((a) => (a.moduloId === mod.id ? { ...a, moduloId: fallback ? fallback.id : '' } : a)));
     saveModulos(todos.filter((m) => m.id !== mod.id));
-    toast('Módulo excluído.');
+    enviarParaLixeira({ tipo: 'modulo', titulo: mod.nome, meta: `${aulas.length} aula(s) movida(s)`, dados: mod });
+    toast('Módulo movido para a lixeira (24h para restaurar).');
     renderAdminPage(root);
   }));
 
@@ -658,8 +746,11 @@ async function refreshArqList(m, aulaId) {
     await downloadFile(b.dataset.dl);
   }));
   box.querySelectorAll('[data-rm]').forEach((b) => b.addEventListener('click', async () => {
-    await deleteFile(b.dataset.rm);
-    toast('Arquivo excluído.');
+    await trashFile(b.dataset.rm);
+    const item = await listFiles(aulaId);
+    const arq = item.find((f) => f.id === b.dataset.rm);
+    enviarParaLixeira({ tipo: 'arquivo', titulo: arq?.nome || 'Arquivo', meta: aula.titulo, dados: { id: b.dataset.rm } });
+    toast('Arquivo movido para a lixeira (24h para restaurar).');
     refreshArqList(m, aulaId);
   }));
 }

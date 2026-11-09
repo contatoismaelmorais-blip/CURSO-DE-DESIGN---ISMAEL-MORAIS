@@ -109,12 +109,96 @@ export async function listFiles(aulaId) {
       req.onsuccess = () => resolve(req.result || []);
       req.onerror = () => reject(req.error);
     });
-    return itens.sort((a, b) => b.criadoEm - a.criadoEm);
+    return itens
+      .filter((f) => !f.lixeiraEm)
+      .sort((a, b) => b.criadoEm - a.criadoEm);
   } catch {
     return readFallback()
-      .filter((f) => f.aulaId === aulaId)
+      .filter((f) => f.aulaId === aulaId && !f.lixeiraEm)
       .sort((a, b) => b.criadoEm - a.criadoEm);
   }
+}
+
+/** Arquivos marcados como excluídos (na lixeira de 24h). */
+export async function listTrashedFiles() {
+  try {
+    const db = await openDB();
+    const itens = await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readonly');
+      const req = tx.objectStore(STORE).getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+    return itens
+      .filter((f) => f.lixeiraEm)
+      .sort((a, b) => b.lixeiraEm - a.lixeiraEm);
+  } catch {
+    return readFallback()
+      .filter((f) => f.lixeiraEm)
+      .sort((a, b) => b.lixeiraEm - a.lixeiraEm);
+  }
+}
+
+/** Move o arquivo para a lixeira: o binário continua guardado por 24h. */
+export async function trashFile(id, expiraEm = Date.now() + 24 * 60 * 60 * 1000) {
+  const item = await getFile(id);
+  if (!item) return null;
+  item.lixeiraEm = Date.now();
+  item.expiraEm = expiraEm;
+  try {
+    const db = await openDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).put(item);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {
+    const list = readFallback();
+    const i = list.findIndex((f) => f.id === id);
+    if (i >= 0) list[i] = { ...list[i], lixeiraEm: item.lixeiraEm, expiraEm };
+    writeFallback(list);
+  }
+  emit('arquivos:changed');
+  return item;
+}
+
+/** Tira o arquivo da lixeira e devolve para a aula original. */
+export async function restoreFile(id) {
+  const item = await getFile(id);
+  if (!item) return false;
+  delete item.lixeiraEm;
+  delete item.expiraEm;
+  try {
+    const db = await openDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).put(item);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {
+    const list = readFallback();
+    const i = list.findIndex((f) => f.id === id);
+    if (i >= 0) list[i] = { ...list[i] };
+    writeFallback(list);
+  }
+  emit('arquivos:changed');
+  return true;
+}
+
+/** Remove em definitivo os arquivos que passaram do prazo de 24h. */
+export async function purgeExpiredFiles() {
+  const agora = Date.now();
+  const lixados = await listTrashedFiles();
+  let n = 0;
+  for (const f of lixados) {
+    if (f.expiraEm && f.expiraEm <= agora) {
+      await deleteFile(f.id);
+      n += 1;
+    }
+  }
+  return n;
 }
 
 export async function countFiles(aulaId) {
