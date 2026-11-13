@@ -132,7 +132,7 @@ function renderHome() {
         <div><dt>Vídeos do YouTube</dt><dd>${aulas.filter((a) => a.youtubeId).length}</dd></div>
       </dl>
     </section>
-    ${modulosHtml || '<p class="empty">Nenhuma aula publicada ainda. Acesse o painel do admin para cadastrar.</p>'}
+    ${modulosHtml || '<p class="empty">As aulas do curso ainda não foram publicadas. Volte em breve.</p>'}
   `;
 
   // Contagem de arquivos por aula nos cards
@@ -177,14 +177,18 @@ async function renderAula(id) {
       </div>
       <div class="tab-panel" id="panel-arquivos" data-panel="arquivos" role="tabpanel" aria-labelledby="tab-arquivos" tabindex="0">
         <div class="files" id="files-list"><p class="muted">Carregando arquivos…</p></div>
-        <form class="upload" id="upload-form">
+        ${
+          isAdmin()
+            ? `<form class="upload" id="upload-form">
           <label class="dropzone" for="file-input">
             <strong>Adicionar documento nesta aula</strong>
             <span>Arraste o arquivo aqui ou clique para selecionar (PDF, imagens, planilhas…)</span>
             <input type="file" id="file-input" multiple hidden>
           </label>
           <button class="btn btn--primary" type="submit">Enviar arquivos</button>
-        </form>
+        </form>`
+            : ''
+        }
       </div>
       <div class="tab-panel is-hidden" id="panel-sobre" data-panel="sobre" role="tabpanel" aria-labelledby="tab-sobre" tabindex="0">
         <p class="lesson-desc">${esc(aula.descricao || 'Sem descrição cadastrada para esta aula.')}</p>
@@ -232,7 +236,7 @@ async function renderAula(id) {
   await refreshFiles(aula.id);
 
   const uploadForm = document.getElementById('upload-form');
-  uploadForm.addEventListener('submit', async (e) => {
+  uploadForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const input = document.getElementById('file-input');
     if (!input.files.length) {

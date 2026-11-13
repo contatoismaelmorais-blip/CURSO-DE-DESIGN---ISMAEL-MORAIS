@@ -1,0 +1,7 @@
+{
+  "versao": 1,
+  "atualizadoEm": "",
+  "nota": "Catálogo publicado do curso: é este arquivo que todos os alunos veem. Substitua pelo JSON exportado no painel do admin (seção 'Publicar o curso') e envie o arquivo ao projeto para valer na publicação.",
+  "modulos": [],
+  "aulas": []
+}

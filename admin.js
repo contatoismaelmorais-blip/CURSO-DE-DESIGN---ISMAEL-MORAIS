@@ -11,8 +11,12 @@ import {
   isAdmin,
   setAdmin,
   uid,
+  catalogoPublico,
+  montarCatalogo,
+  aplicarCatalogo,
 } from './store.js';
-import { listFiles, saveFile, trashFile, restoreFile, deleteFile, downloadFile, purgeExpiredFiles } from './db.js';
+import { listFiles, saveFile, trashFile, restoreFile, deleteFile, downloadFile, purgeExpiredFiles, armazenamentoCompartilhado } from './db.js';
+import { configArmazenamento, salvarConfigArmazenamento } from './armazenamento.js';
 import { enviarParaLixeira, getLixeira, limparLixeira, removerDaLixeira, esvaziarLixeira, formatarRestante } from './lixeira.js';
 import { buscarVideosDoCanal, parseUrlList } from './youtube.js';
 import { esc, formatSize, formatDate } from './util.js';
@@ -62,6 +66,8 @@ export function renderAdminPage(root) {
   purgeExpiredFiles(); // apaga da lixeira o que passou de 24h
   const aulas = getAulas();
   const modulos = getModulos().sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0));
+  const cat = catalogoPublico();
+  const cfgArm = configArmazenamento();
 
   root.innerHTML = `
     <section class="admin-head">
@@ -163,6 +169,22 @@ export function renderAdminPage(root) {
     </section>
 
     <section class="panel">
+      <h2>Publicar o curso</h2>
+      <p class="muted">O conteúdo que os alunos veem vem do arquivo <code>catalogo.json</code> do site. O que você edita aqui fica só neste navegador até ser publicado.</p>
+      <p class="muted small">Catálogo publicado: versão ${esc(String(cat.versao))}${cat.atualizadoEm ? ` · atualizado em ${esc(new Date(cat.atualizadoEm).toLocaleString('pt-BR'))}` : ' · ainda não publicado'}.</p>
+      <div class="admin-actions admin-actions--row">
+        <button class="btn btn--primary" id="publicar">Gerar catálogo para publicar</button>
+        <button class="btn btn--ghost" id="copiar-catalogo">Copiar JSON</button>
+        <button class="btn btn--ghost" id="voltar-publicado">Descartar edições locais</button>
+      </div>
+      <textarea id="catalogo-json" rows="8" class="catalogo-json" readonly placeholder="Clique em “Gerar catálogo para publicar” para ver o conteúdo que será publicado."></textarea>
+      <p class="muted small">Envie o conteúdo acima (ou o arquivo baixado) ao projeto: ele passa a valer para todos os alunos no site publicado. O “Baixar” grava o arquivo <code>catalogo.json</code>.</p>
+      <div class="admin-actions admin-actions--row">
+        <button class="btn btn--ghost" id="baixar-catalogo">Baixar catalogo.json</button>
+      </div>
+    </section>
+
+    <section class="panel">
       <h2>Configurações</h2>
       <form class="card-form" id="pin-form">
         <label>Alterar PIN do admin
@@ -171,6 +193,21 @@ export function renderAdminPage(root) {
         <button class="btn btn--primary" type="submit">Salvar PIN</button>
       </form>
       <p class="muted small">Os dados ficam salvos neste navegador (localStorage + IndexedDB). Nada é enviado para servidores externos além do player do YouTube.</p>
+      <form class="card-form" id="arm-form">
+        <h3>Armazenamento compartilhado dos materiais</h3>
+        <p class="muted small">Sem configuração, os arquivos anexados ficam só neste navegador e os alunos não conseguem baixá-los. Informando um serviço compartilhado, todos veem e baixam os mesmos materiais.</p>
+        <label>Endereço do serviço (ex.: https://SEU-PROJETO.supabase.co)
+          <input type="text" id="arm-url" value="${esc(cfgArm.url)}" placeholder="https://SEU-PROJETO.supabase.co">
+        </label>
+        <label>Chave anônima (anon key)
+          <input type="text" id="arm-key" value="${esc(cfgArm.anonKey)}" placeholder="eyJ...">
+        </label>
+        <label>Bucket de Storage
+          <input type="text" id="arm-bucket" value="${esc(cfgArm.bucket)}" placeholder="materiais">
+        </label>
+        <button class="btn btn--primary" type="submit">Salvar armazenamento</button>
+        <p class="muted small">${cfgArm.ativo ? 'Armazenamento compartilhativo <strong>ativo</strong>: materiais visíveis para todos.' : 'Armazenamento compartilhado <strong>inativo</strong>: materiais só existem neste navegador.'}</p>
+      </form>
       <div class="admin-actions admin-actions--row">
         <button class="btn btn--ghost" id="exportar">Exportar dados</button>
         <button class="btn btn--ghost" id="importar">Importar dados</button>
@@ -322,6 +359,43 @@ function bindAdmin(root) {
     input.click();
   });
   root.querySelector('#sair')?.addEventListener('click', () => { setAdmin(false); renderAdminPage(root); });
+  /* ------------------------------------------------- publicação do curso */
+  root.querySelector('#publicar')?.addEventListener('click', () => {
+    const box = root.querySelector('#catalogo-json');
+    if (!box) return;
+    box.value = JSON.stringify(montarCatalogo(), null, 2);
+    toast('Catálogo gerado. Envie o conteúdo ao projeto para publicar.');
+  });
+  root.querySelector('#copiar-catalogo')?.addEventListener('click', async () => {
+    const box = root.querySelector('#catalogo-json');
+    if (!box) return;
+    if (!box.value) box.value = JSON.stringify(montarCatalogo(), null, 2);
+    try {
+      await navigator.clipboard.writeText(box.value);
+      toast('JSON copiado.');
+    } catch {
+      box.select();
+      toast('Selecione e copie o texto manualmente.', 'warn');
+    }
+  });
+  root.querySelector('#baixar-catalogo')?.addEventListener('click', () => {
+    const box = root.querySelector('#catalogo-json');
+    const payload = (box && box.value) || JSON.stringify(montarCatalogo(), null, 2);
+    const blob = new Blob([payload], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'catalogo.json';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+    toast('catalogo.json baixado — envie o arquivo ao projeto.');
+  });
+  root.querySelector('#voltar-publicado')?.addEventListener('click', () => {
+    if (!confirm('Descartar as edições locais e voltar ao catálogo publicado?')) return;
+    aplicarCatalogo(catalogoPublico());
+    toast('Edições locais descartadas.');
+    renderAdminPage(root);
+  });
   /* ------------------------------------------------ importação do canal */
   root.querySelector('#import-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -359,6 +433,16 @@ function bindAdmin(root) {
     mostrarPreview(root);
     const status = root.querySelector('#imp-status');
     if (status) status.textContent = `${itens.length} link(s) lido(s) da lista.`;
+  });
+  root.querySelector('#arm-form')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    salvarConfigArmazenamento({
+      url: root.querySelector('#arm-url').value.trim(),
+      anonKey: root.querySelector('#arm-key').value.trim(),
+      bucket: root.querySelector('#arm-bucket').value.trim() || 'materiais',
+    });
+    toast('Armazenamento atualizado.');
+    renderAdminPage(root);
   });
   root.querySelector('#pin-form')?.addEventListener('submit', (e) => {
     e.preventDefault();

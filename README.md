@@ -43,7 +43,9 @@ junction em `.claude/skills/` — use `--copy` se a junction for bloqueada.
 | `motion.js`        | Fundo animado: vídeo tocado pela rolagem + parallax do vídeo de fundo |
 | `admin.js`         | Painel do admin: login por PIN, CRUD de aulas e módulos, arquivos, backup, importação do canal |
 | `youtube.js`      | Leitura do canal do YouTube: feed RSS (XML/JSON), descoberta do ID do canal, lista de links |
-| `store.js`         | Estado das aulas/módulos (localStorage) + extração do ID do YouTube |
+| `store.js`         | Estado das aulas/módulos (localStorage) + catálogo publicado (`catalogo.json`) + extração do ID do YouTube |
+| `catalogo.json`   | Conteúdo publicado do curso: é o que **todos os alunos** veem |
+| `armazenamento.js`| Configuração e cliente do armazenamento compartilhado dos materiais (padrão: Supabase) |
 | `db.js`            | Arquivos das aulas em IndexedDB (fallback: localStorage) |
 | `util.js`          | Funções compartilhadas (escape de HTML, tamanho de arquivo, data, ícone) |
 | `public/fundo.mp4` | Vídeo de fundo da plataforma (H.264, 1920x1080, 5,97 s) |
@@ -70,6 +72,26 @@ junction em `.claude/skills/` — use `--copy` se a junction for bloqueada.
   descrição, módulo, ordem e visibilidade.
 - Modal de arquivos por aula: upload e exclusão.
 - Exportar/importar backup em JSON.
+- **Publicar o curso** (seção "Publicar o curso"): mostra o `catalogo.json` atual,
+  o botão para gerar o catálogo a partir das aulas cadastradas e um campo para
+  colar o catálogo. O arquivo `catalogo.json` do projeto é o que os alunos veem:
+  depois de gerar o catálogo no painel, copie o JSON e envie o arquivo ao projeto
+  para a publicação valer.
+- **Armazenamento compartilhado dos materiais** (Configurações): com URL do
+  projeto, chave anônima e bucket, os arquivos anexados passam a ficar num lugar
+  comum (tabela `public.arquivos` + bucket de Storage) e todo aluno consegue
+  listar e baixar. Sem essa configuração, os materiais ficam só no navegador do
+  admin (IndexedDB).
+
+## Publicação do curso
+
+1. No painel do admin, cadastre aulas e módulos.
+2. Em "Publicar o curso", clique em **Gerar catálogo** e copie o JSON exibido.
+3. Salve esse JSON como `catalogo.json` no projeto (substituindo o anterior).
+
+O `catalogo.json` é lido por todos os visitantes: sem ele, a página do aluno
+mostra "As aulas do curso ainda não foram publicadas". As edições feitas no
+painel continuam só no navegador do admin até a publicação.
 - **Importar aulas do canal do YouTube** (seção "Importar aulas do canal do YouTube"):
   - campo 1 — link do canal (`youtube.com/@canal`), link do feed RSS
     (`youtube.com/feeds/videos.xml?channel_id=UC…`), `@nome`, `/c/nome`, `/user/nome`

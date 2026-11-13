@@ -337,6 +337,8 @@ code{background:rgba(255,255,255,.08);padding:2px 7px;border-radius:6px;font-siz
   padding:12px 14px;font-size:14.5px;color:var(--text);width:100%;
 }
 .card-form input:focus,.card-form select:focus,.card-form textarea:focus{border-color:var(--accent)}
+.catalogo-json{width:100%;margin-top:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;line-height:1.5;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:10px;padding:12px;color:var(--text);resize:vertical}
+.admin-actions--row{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 .card-form .check{flex-direction:row;align-items:center;gap:10px}
 .card-form .check input{width:auto;accent-color:var(--accent)}
 .grid-2{display:grid;grid-template-columns:1fr 140px;gap:14px}

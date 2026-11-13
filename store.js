@@ -1,6 +1,19 @@
-// Persistência local: metadados de aulas/módulos em localStorage, binários em IndexedDB.
-const AULAS_KEY = 'curso:aulas:v1';
-const MODULOS_KEY = 'curso:modulos:v1';
+// Estado do curso.
+//
+// O conteúdo publicado vive em `catalogo.json` (empacotado com o site): é o que
+// todos os alunos veem. O painel do admin trabalha sobre uma cópia local
+// (localStorage) para editar e publicar; a cópia local nunca é lida pelo aluno,
+// por isso ele nunca fica com uma versão diferente da publicada.
+//
+// Antes isto guardava tudo no navegador de cada visitante, então cada pessoa
+// via uma cópia diferente do curso (e a cópia de demonstração do código).
+
+import catalogo from './catalogo.json';
+
+const AULAS_KEY = 'curso:aulas:v2';
+const MODULOS_KEY = 'curso:modulos:v2';
+const AULAS_OLD = 'curso:aulas:v1';
+const MODULOS_OLD = 'curso:modulos:v1';
 const ADMIN_KEY = 'curso:admin:v1';
 
 export function uid(prefix = 'id') {
@@ -25,12 +38,46 @@ function emit(name, detail) {
   window.dispatchEvent(new CustomEvent(name, detail ? { detail } : undefined));
 }
 
+/* --------------------------------------------------------- catálogo publicado */
+
+/** Catálogo publicado no site: a versão oficial do curso para todos. */
+export function catalogoPublico() {
+  return {
+    versao: catalogo.versao ?? 1,
+    atualizadoEm: catalogo.atualizadoEm || '',
+    modulos: Array.isArray(catalogo.modulos) ? catalogo.modulos : [],
+    aulas: Array.isArray(catalogo.aulas) ? catalogo.aulas : [],
+  };
+}
+
+/** Gera o conteúdo do arquivo `catalogo.json` a partir do estado atual. */
+export function montarCatalogo() {
+  return {
+    versao: Date.now(),
+    atualizadoEm: new Date().toISOString(),
+    modulos: getModulos(),
+    aulas: getAulas(),
+  };
+}
+
+/** Aplica um catálogo (importado ou publicado) no estado local do admin. */
+export function aplicarCatalogo(dados = {}) {
+  if (Array.isArray(dados.aulas)) writeJSON(AULAS_KEY, dados.aulas);
+  if (Array.isArray(dados.modulos)) writeJSON(MODULOS_KEY, dados.modulos);
+  emit('aulas:changed');
+}
+
+/* -------------------------------------------------------------------- aulas */
+
 export function getAulas() {
+  if (!isAdmin()) return catalogoPublico().aulas;
   const list = readJSON(AULAS_KEY, null);
   if (!Array.isArray(list)) {
-    const seeded = seedAulas();
-    writeJSON(AULAS_KEY, seeded);
-    return seeded;
+    // migração: aproveita o que já existia no navegador do admin
+    const antigo = readJSON(AULAS_OLD, null);
+    const base = Array.isArray(antigo) && antigo.length ? antigo : catalogoPublico().aulas;
+    writeJSON(AULAS_KEY, base);
+    return base;
   }
   return list;
 }
@@ -41,11 +88,13 @@ export function saveAulas(list) {
 }
 
 export function getModulos() {
+  if (!isAdmin()) return catalogoPublico().modulos;
   const list = readJSON(MODULOS_KEY, null);
   if (!Array.isArray(list)) {
-    const seeded = seedModulos();
-    writeJSON(MODULOS_KEY, seeded);
-    return seeded;
+    const antigo = readJSON(MODULOS_OLD, null);
+    const base = Array.isArray(antigo) && antigo.length ? antigo : catalogoPublico().modulos;
+    writeJSON(MODULOS_KEY, base);
+    return base;
   }
   return list;
 }
@@ -107,47 +156,4 @@ export function youtubeThumb(id) {
 
 export function youtubeEmbed(id) {
   return `https://www.youtube-nocookie.com/embed/${id}?rel=0&modestbranding=1`;
-}
-
-function seedModulos() {
-  return [
-    { id: 'mod_1', nome: 'Módulo 1: Fundamentos', ordem: 1 },
-    { id: 'mod_2', nome: 'Módulo 2: Prática', ordem: 2 },
-  ];
-}
-
-function seedAulas() {
-  const agora = Date.now();
-  return [
-    {
-      id: 'aula_1',
-      titulo: 'Abertura do curso e apresentação',
-      descricao: 'Boas-vindas, apresentação do projeto e como acompanhar as aulas. Baixe o material de apoio desta aula na aba Arquivos.',
-      moduloId: 'mod_1',
-      ordem: 1,
-      youtubeId: 'jNQXAC9IVRw',
-      publicado: true,
-      criadoEm: agora,
-    },
-    {
-      id: 'aula_2',
-      titulo: 'Introdução ao design: conceitos e ferramenta',
-      descricao: 'Panorama inicial do design, interfaces e o que você vai produzir ao longo do curso.',
-      moduloId: 'mod_1',
-      ordem: 2,
-      youtubeId: 'aqz-KE-bpKQ',
-      publicado: true,
-      criadoEm: agora + 1000,
-    },
-    {
-      id: 'aula_3',
-      titulo: 'Mão na massa: primeiro projeto guiado',
-      descricao: 'Exercício prático do primeiro módulo, do zero até a entrega.',
-      moduloId: 'mod_2',
-      ordem: 1,
-      youtubeId: 'aqz-KE-bpKQ',
-      publicado: true,
-      criadoEm: agora + 2000,
-    },
-  ];
 }
