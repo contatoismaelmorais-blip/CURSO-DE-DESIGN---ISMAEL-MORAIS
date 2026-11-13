@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="pt-BR">
+<head><meta charset="utf-8"><title>debug env</title></head>
+<body>
+<pre id="out">coletando…</pre>
+<script type="module">
+const out = document.getElementById('out')
+const info = {}
+info.windowKeys = Object.keys(window).filter(k => /supabase|nexus|env|config|project/i.test(k))
+info.globalSupabase = window.__SUPABASE__ ?? null
+info.globalNexus = window.__NEXUS__ ?? null
+info.metaEnv = {}
+try {
+  const m = await import('/@vite/env')
+  info.metaEnv = m.env
+} catch (e) {
+  info.metaEnvErro = String(e)
+}
+try {
+  const m2 = await import('virtual:env')
+  info.virtualEnv = m2.env ?? m2.default
+} catch (e) {
+  info.virtualEnvErro = String(e)
+}
+info.localStorage = Object.fromEntries(Object.entries(localStorage))
+out.textContent = JSON.stringify(info, null, 2)
+</script>
+</body>
+</html>

@@ -17,6 +17,32 @@ import content from './content.json';
 
 const CONFIG_KEY = 'curso:armazenamento:v1';
 
+/** Variáveis de ambiente injetadas na build (Vite) — quando existirem. */
+function env(chaves) {
+  try {
+    const e = import.meta.env || {};
+    for (const k of chaves) {
+      if (e[k]) return String(e[k]);
+    }
+  } catch {
+    /* ambiente sem import.meta.env */
+  }
+  return '';
+}
+
+/** Configuração global do site (injetada pelo servidor da plataforma). */
+function globalConfig() {
+  try {
+    const g = (typeof window !== 'undefined' && (window.__SUPABASE__ || window.__NEXUS__?.supabase)) || {};
+    return {
+      url: String(g.url || g.supabaseUrl || ''),
+      anonKey: String(g.anonKey || g.supabaseAnonKey || ''),
+    };
+  } catch {
+    return { url: '', anonKey: '' };
+  }
+}
+
 /** Configuração atual (padrões do projeto + ajustes do admin neste navegador). */
 export function configArmazenamento() {
   const base = content.armazenamento || {};
@@ -26,8 +52,15 @@ export function configArmazenamento() {
   } catch {
     local = {};
   }
-  const url = String(local.url || base.url || '').trim().replace(/\/+$/, '');
-  const anonKey = String(local.anonKey || base.anonKey || '');
+  const glob = globalConfig();
+  const url = String(
+    local.url || glob.url || base.url || env(['VITE_SUPABASE_URL', 'SUPABASE_URL', 'PUBLIC_SUPABASE_URL'])
+  )
+    .trim()
+    .replace(/\/+$/, '');
+  const anonKey = String(
+    local.anonKey || glob.anonKey || base.anonKey || env(['VITE_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY', 'PUBLIC_SUPABASE_ANON_KEY'])
+  );
   const bucket = String(local.bucket || base.bucket || 'materiais');
   return { url, anonKey, bucket, ativo: Boolean(url) };
 }
@@ -51,6 +84,40 @@ function caminhoSeguro(aulaId, nome) {
   const base = String(nome).replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 60);
   return `${aulaId || 'sem-aula'}/${Date.now().toString(36)}-${base}.${ext}`;
 }
+
+/* ------------------------------------------------------------------ catálogo */
+
+/** Catálogo publicado no Supabase (o mesmo para todos os visitantes). */
+export async function listarCatalogoRemoto() {
+  const { url } = configArmazenamento();
+  if (!url) return null;
+  const res = await fetch(`${url}/rest/v1/catalogo?id=eq.atual&select=dados`, {
+    headers: cabecalhos(),
+  });
+  if (!res.ok) throw new Error(`Falha ao ler o catálogo publicado (HTTP ${res.status}).`);
+  const linhas = await res.json();
+  const dados = Array.isArray(linhas) ? linhas[0]?.dados : null;
+  return dados && Array.isArray(dados.aulas) ? dados : null;
+}
+
+/** Publica o catálogo no Supabase: passa a valer para todos os alunos. */
+export async function salvarCatalogoRemoto(dados) {
+  const { url } = configArmazenamento();
+  if (!url) throw new Error('Armazenamento compartilhado não configurado.');
+  const res = await fetch(`${url}/rest/v1/catalogo?id=eq.atual`, {
+    method: 'PATCH',
+    headers: cabecalhos({ 'Content-Type': 'application/json', Prefer: 'return=minimal' }),
+    body: JSON.stringify({
+      versao: Date.now(),
+      atualizadoEm: new Date().toISOString(),
+      dados,
+    }),
+  });
+  if (!res.ok) throw new Error(`Falha ao publicar o catálogo (HTTP ${res.status}).`);
+  return true;
+}
+
+/* ---------------------------------------------------------------- materiais */
 
 /** Lista os materiais de uma aula no serviço compartilhado. */
 export async function listarRemoto(aulaId) {
