@@ -16,7 +16,7 @@ import {
   aplicarCatalogo,
 } from './store.js';
 import { listFiles, saveFile, trashFile, restoreFile, deleteFile, downloadFile, purgeExpiredFiles, armazenamentoCompartilhado } from './db.js';
-import { configArmazenamento, salvarConfigArmazenamento } from './armazenamento.js';
+import { configArmazenamento, salvarConfigArmazenamento, salvarCatalogoRemoto } from './armazenamento.js';
 import { enviarParaLixeira, getLixeira, limparLixeira, removerDaLixeira, esvaziarLixeira, formatarRestante } from './lixeira.js';
 import { buscarVideosDoCanal, parseUrlList } from './youtube.js';
 import { esc, formatSize, formatDate } from './util.js';
@@ -174,6 +174,7 @@ export function renderAdminPage(root) {
       <p class="muted small">Catálogo publicado: versão ${esc(String(cat.versao))}${cat.atualizadoEm ? ` · atualizado em ${esc(new Date(cat.atualizadoEm).toLocaleString('pt-BR'))}` : ' · ainda não publicado'}.</p>
       <div class="admin-actions admin-actions--row">
         <button class="btn btn--primary" id="publicar">Gerar catálogo para publicar</button>
+        <button class="btn btn--ghost" id="publicar-remoto">Publicar agora para todos</button>
         <button class="btn btn--ghost" id="copiar-catalogo">Copiar JSON</button>
         <button class="btn btn--ghost" id="voltar-publicado">Descartar edições locais</button>
       </div>
@@ -365,6 +366,18 @@ function bindAdmin(root) {
     if (!box) return;
     box.value = JSON.stringify(montarCatalogo(), null, 2);
     toast('Catálogo gerado. Envie o conteúdo ao projeto para publicar.');
+  });
+  root.querySelector('#publicar-remoto')?.addEventListener('click', async () => {
+    const btn = root.querySelector('#publicar-remoto');
+    btn.disabled = true;
+    try {
+      await salvarCatalogoRemoto(montarCatalogo());
+      toast('Curso publicado: agora todos os alunos veem este conteúdo.');
+    } catch (err) {
+      toast(err.message || 'Não foi possível publicar no serviço compartilhado.', 'error');
+    } finally {
+      btn.disabled = false;
+    }
   });
   root.querySelector('#copiar-catalogo')?.addEventListener('click', async () => {
     const box = root.querySelector('#catalogo-json');

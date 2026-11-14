@@ -9,6 +9,7 @@
 // via uma cópia diferente do curso (e a cópia de demonstração do código).
 
 import catalogo from './catalogo.json';
+import { listarCatalogoRemoto } from './armazenamento.js';
 
 const AULAS_KEY = 'curso:aulas:v2';
 const MODULOS_KEY = 'curso:modulos:v2';
@@ -40,8 +41,38 @@ function emit(name, detail) {
 
 /* --------------------------------------------------------- catálogo publicado */
 
+// Catálogo publicado no serviço compartilhado (Supabase): é o que vale para
+// todos os visitantes. Se ainda não houver nada publicado, vale o arquivo
+// `catalogo.json` que vem empacotado com o site.
+let catalogoRemoto = null;
+let catalogoRemotoTentado = false;
+
+/**
+ * Busca o catálogo publicado no serviço compartilhado.
+ * `forcar = true` busca de novo (usado para atualizar periodicamente).
+ */
+export async function carregarCatalogoRemoto(forcar = false) {
+  if (catalogoRemotoTentado && !forcar) return catalogoRemoto;
+  catalogoRemotoTentado = true;
+  try {
+    const dados = await listarCatalogoRemoto();
+    if (dados && Array.isArray(dados.aulas)) {
+      catalogoRemoto = {
+        versao: Date.now(),
+        atualizadoEm: dados.atualizadoEm || '',
+        modulos: Array.isArray(dados.modulos) ? dados.modulos : [],
+        aulas: dados.aulas,
+      };
+    }
+  } catch {
+    // Sem serviço configurado ou fora do ar: segue com o catálogo do site.
+  }
+  return catalogoRemoto;
+}
+
 /** Catálogo publicado no site: a versão oficial do curso para todos. */
 export function catalogoPublico() {
+  if (catalogoRemoto) return catalogoRemoto;
   return {
     versao: catalogo.versao ?? 1,
     atualizadoEm: catalogo.atualizadoEm || '',

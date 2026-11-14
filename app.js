@@ -5,6 +5,7 @@ import {
   youtubeThumb,
   youtubeEmbed,
   isAdmin,
+  carregarCatalogoRemoto,
 } from './store.js';
 import { listFiles, saveFile, downloadFile, trashFile } from './db.js';
 import { enviarParaLixeira } from './lixeira.js';
@@ -311,13 +312,25 @@ document.querySelector('[data-tagline]').textContent = content.tagline;
 initFundoVideo();
 
 window.addEventListener('hashchange', navigate);
-window.addEventListener('aulas:changed', () => {
+// O catálogo publicado no serviço compartilhado vale para todos: buscamos
+// antes de desenhar a tela para o aluno não ver uma versão diferente.
+carregarCatalogoRemoto().finally(() => {
+  navigate();
+});
+// Se o admin publicar algo novo, a página do aluno se atualiza sozinha.
+setInterval(() => {
+  carregarCatalogoRemoto(true).catch(() => {});
+}, 60000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) carregarCatalogoRemoto(true).catch(() => {});
+});
+window.addEventListener('aulas:changed', recarregarCatalogo);
+
+function recarregarCatalogo() {
   const route = parseHash();
   if (route.name !== 'admin') navigate();
-});
+}
 window.addEventListener('arquivos:changed', (e) => {
   const route = parseHash();
   if (route.name === 'aula' && (!e.detail || e.detail.aulaId === route.id)) refreshFiles(route.id);
 });
-
-navigate();

@@ -72,10 +72,24 @@ export function salvarConfigArmazenamento(cfg = {}) {
 
 function cabecalhos(extra = {}) {
   const { anonKey } = configArmazenamento();
+  const base = { apikey: anonKey };
+  // A chave pública nova (sb_publishable_…) não é um JWT: usá-la no header
+  // Authorization seria rejeitada. Nesse caso, o papel anônimo vem do próprio
+  // header apikey.
+  if (/^eyJ|^sb_secret_/.test(anonKey)) {
+    base.Authorization = `Bearer ${anonKey}`;
+  }
+  return { ...base, ...extra };
+}
+
+/** As colunas do banco são em minúsculas; aqui voltamos para o formato usado na interface. */
+function normalizarRegistro(linha = {}) {
   return {
-    apikey: anonKey,
-    Authorization: `Bearer ${anonKey}`,
-    ...extra,
+    ...linha,
+    aulaId: linha.aulaId ?? linha.aulaid ?? '',
+    criadoEm: linha.criadoEm ?? linha.criadoem ?? '',
+    lixeiraEm: linha.lixeiraEm ?? linha.lixeiraem ?? null,
+    expiraEm: linha.expiraEm ?? linha.expiraem ?? null,
   };
 }
 
@@ -109,7 +123,7 @@ export async function salvarCatalogoRemoto(dados) {
     headers: cabecalhos({ 'Content-Type': 'application/json', Prefer: 'return=minimal' }),
     body: JSON.stringify({
       versao: Date.now(),
-      atualizadoEm: new Date().toISOString(),
+      atualizadoem: new Date().toISOString(),
       dados,
     }),
   });
@@ -122,23 +136,23 @@ export async function salvarCatalogoRemoto(dados) {
 /** Lista os materiais de uma aula no serviço compartilhado. */
 export async function listarRemoto(aulaId) {
   const { url } = configArmazenamento();
-  const res = await fetch(`${url}/rest/v1/arquivos?aulaId=eq.${encodeURIComponent(aulaId)}&select=*`, {
+  const res = await fetch(`${url}/rest/v1/arquivos?aulaid=eq.${encodeURIComponent(aulaId)}&select=*`, {
     headers: cabecalhos(),
   });
   if (!res.ok) throw new Error(`Falha ao listar materiais (HTTP ${res.status}).`);
   const dados = await res.json();
-  return Array.isArray(dados) ? dados : [];
+  return Array.isArray(dados) ? dados.map(normalizarRegistro) : [];
 }
 
 /** Lista todos os materiais (inclusive os que estão na lixeira). */
 export async function listarTodosRemoto() {
   const { url } = configArmazenamento();
-  const res = await fetch(`${url}/rest/v1/arquivos?select=*&order=criadoEm.desc`, {
+  const res = await fetch(`${url}/rest/v1/arquivos?select=*&order=criadoem.desc`, {
     headers: cabecalhos(),
   });
   if (!res.ok) throw new Error(`Falha ao listar materiais (HTTP ${res.status}).`);
   const dados = await res.json();
-  return Array.isArray(dados) ? dados : [];
+  return Array.isArray(dados) ? dados.map(normalizarRegistro) : [];
 }
 
 /** Envia o arquivo para o bucket e grava os metadados na tabela. */
@@ -154,11 +168,11 @@ export async function enviarRemoto(aulaId, file) {
   if (!up.ok) throw new Error(`Falha ao enviar o arquivo (HTTP ${up.status}).`);
   const registro = {
     id,
-    aulaId,
+    aulaid: aulaId,
     nome: file.name,
     tipo: file.type || 'application/octet-stream',
     tamanho: file.size,
-    criadoEm: new Date().toISOString(),
+    criadoem: new Date().toISOString(),
     path,
   };
   const meta = await fetch(`${url}/rest/v1/arquivos`, {
@@ -173,10 +187,13 @@ export async function enviarRemoto(aulaId, file) {
 /** Atualiza campos de um material (usado pela lixeira). */
 export async function atualizarRemoto(id, campos = {}) {
   const { url } = configArmazenamento();
+  // As colunas do banco são em minúsculas (aulaid, criadoem, lixeiraem…).
+  const body = {};
+  for (const [k, v] of Object.entries(campos)) body[k.toLowerCase()] = v;
   const res = await fetch(`${url}/rest/v1/arquivos?id=eq.${encodeURIComponent(id)}`, {
     method: 'PATCH',
     headers: cabecalhos({ 'Content-Type': 'application/json', Prefer: 'return=minimal' }),
-    body: JSON.stringify(campos),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Falha ao atualizar o arquivo (HTTP ${res.status}).`);
   return true;
